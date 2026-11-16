@@ -54,3 +54,9 @@ class WorkbenchTests(unittest.TestCase):
     def test_static_dom_not_innerhtml(self):
         script=self.client.get('/ui.js').text
         self.assertNotIn('innerHTML',script);self.assertIn('textContent',script)
+    def test_false_content_length_does_not_bypass_limit(self):
+        headers={**self.h('resolver'),'content-length':'1'}
+        self.assertEqual(self.client.post('/api/v1/resolutions',content='x'*20000,headers=headers).status_code,413)
+    def test_mismatched_content_length_rejected(self):
+        headers={**self.h('resolver'),'content-length':'1'}
+        self.assertEqual(self.client.post('/api/v1/resolutions',content='{}',headers=headers).status_code,400)

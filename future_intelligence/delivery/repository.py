@@ -121,12 +121,15 @@ class DeliveryRepository:
         by_kind = {r['kind']:self.get_batch(r['id']) for r in rows}
         if set(by_kind)!={'REGISTRATION','FORECAST'}:
             raise ValueError('complete registration and forecast batches required')
-        batch.verify_pair(by_kind['REGISTRATION'],by_kind['FORECAST'])
+        _, final_records = batch.verify_pair(by_kind['REGISTRATION'],by_kind['FORECAST'])
+        # Select only question identities already present in the sealed public proof.
+        # Do not broaden operator privileges to underlying task tables.
+        versions = sorted({uid(t['question_version_id']) for t in final_records[1:]})
         anchors=self.many("""SELECT a.id,a.batch_id,a.protocol,encode(a.request_bytes,'base64') AS query_b64,
           r.status,encode(r.reply_bytes,'base64') AS reply_b64,r.error_code,v.report AS claimed_verification
           FROM fi.anchor_requests a JOIN fi.commitment_batches b ON b.id=a.batch_id
           LEFT JOIN fi.anchor_replies r ON r.request_id=a.id LEFT JOIN fi.anchor_verifications v ON v.request_id=a.id
           WHERE b.experiment_id=%s::uuid ORDER BY a.created_at,a.id""",(uid(experiment),))
-        outcomes=self.many("SELECT * FROM fi.outcome_catalog WHERE version_id IN(SELECT question_version_id FROM fi.expected_tasks WHERE experiment_id=%s::uuid) ORDER BY version_id",(uid(experiment),))
+        outcomes=self.many("SELECT * FROM fi.outcome_catalog WHERE version_id=ANY(%s::uuid[]) ORDER BY version_id",(versions,))
         return dict(protocol='fi.audit-export.v1',classification='INTERNAL_RESEARCH_NOT_AUTOMATIC_PUBLICATION',
                     registration=by_kind['REGISTRATION'],forecast=by_kind['FORECAST'],anchors=anchors,outcomes=outcomes)

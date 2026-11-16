@@ -6,6 +6,7 @@ import json
 from .batch import verify_pair, strict_json
 from .timestamps import TrustProfile, verify_reply, utc, VerificationError
 from .evaluation import score
+from .manifest import validate_manifest
 
 
 def verify_export(data: dict, ca_pem: bytes, profile: TrustProfile) -> dict:
@@ -13,6 +14,8 @@ def verify_export(data: dict, ca_pem: bytes, profile: TrustProfile) -> dict:
         raise ValueError('unsupported export')
     registration, forecast = data['registration'], data['forecast']
     r, f = verify_pair(registration, forecast)
+    validate_manifest(r)
+    questions=validate_manifest(f)
     registered_profile = r[0]['trust_profile']
     if json.loads(json.dumps(profile.__dict__)) != registered_profile:
         raise VerificationError('untrusted bundle cannot supply its own trust profile')
@@ -40,7 +43,6 @@ def verify_export(data: dict, ca_pem: bytes, profile: TrustProfile) -> dict:
     has_time=len(upper)==2
     first_claim=f[0].get('first_attempt_at')
     preregistered=has_time and first_claim is not None and upper[registration['batch_id']]<=utc(first_claim)
-    questions={q['version_id']:strict_json(q['snapshot_text'])['spec'] for q in f[0]['questions']}
     outcomes={o['version_id']:o for o in data.get('outcomes',[])}
     if len(outcomes)!=len(data.get('outcomes',[])):
         raise ValueError('duplicate outcomes')

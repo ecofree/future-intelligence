@@ -5,6 +5,7 @@ No public deployment, password login, CORS bypass or model-call endpoint.
 from __future__ import annotations
 
 import hmac
+import asyncio
 import json
 import os
 from uuid import UUID
@@ -50,6 +51,18 @@ def create_app(accounts: dict):
                 length=-1
             if length<0 or length>16384:
                 return JSONResponse({'error':'BODY_LENGTH_REQUIRED_OR_TOO_LARGE'},status_code=413)
+            body=bytearray()
+            try:
+                async with asyncio.timeout(5):
+                    async for chunk in request.stream():
+                        body.extend(chunk)
+                        if len(body)>16384:
+                            return JSONResponse({'error':'BODY_TOO_LARGE'},status_code=413)
+            except (TimeoutError,RuntimeError):
+                return JSONResponse({'error':'INCOMPLETE_BODY'},status_code=408)
+            if len(body)!=length:
+                return JSONResponse({'error':'BODY_LENGTH_MISMATCH'},status_code=400)
+            request._body=bytes(body)
         response=await call_next(request)
         response.headers['Cache-Control']='no-store'
         response.headers['X-Content-Type-Options']='nosniff'
