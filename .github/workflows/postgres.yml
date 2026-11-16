@@ -51,6 +51,8 @@ jobs:
         run: python scripts/check_task_persistence.py write /tmp/fi-task-persistence.json
       - name: Write persistence checkpoint
         run: python scripts/check_persistence.py write /tmp/fi-persistence.json
+      - name: Write evidence and provider checkpoint
+        run: python scripts/check_provider_persistence.py write /tmp/fi-provider-persistence.json
       - name: Restart actual PostgreSQL server
         run: |
           docker restart '${{ job.services.postgres.id }}'
@@ -63,6 +65,8 @@ jobs:
           exit 1
       - name: Verify rows after server restart
         run: python scripts/check_persistence.py verify /tmp/fi-persistence.json
+      - name: Verify evidence and provider persistence
+        run: python scripts/check_provider_persistence.py verify /tmp/fi-provider-persistence.json
       - name: Verify task ledger and resume safe work
         run: python scripts/check_task_persistence.py verify /tmp/fi-task-persistence.json
       - name: Reapply migrations without changes

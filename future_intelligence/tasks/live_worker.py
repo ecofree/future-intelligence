@@ -38,8 +38,14 @@ def run_once(repo, experiment: str, transport=None, environ=None) -> dict:
     if repo.prepare(lease, body) is not True:
         return {**identity, 'status': 'NO_REDISPATCH', 'reason': 'CALL_MARKER_ALREADY_EXISTS'}
     try:
-        wire = wire_client.send(entry['provider'], entry['model_id'], body, key,
-                                entry['parameters']['timeout_seconds'])
+        # Lock waits during prepare must not spend an already exhausted lease.
+        # A committed intent still remains conservatively unresolved for recovery.
+        remaining = (lease_end-datetime.now(timezone.utc)).total_seconds()
+        if remaining < entry['parameters']['timeout_seconds'] + 5:
+            wire = WireResponse(None, b'', error_code='TIMEOUT')
+        else:
+            wire = wire_client.send(entry['provider'], entry['model_id'], body, key,
+                                    entry['parameters']['timeout_seconds'])
     except Exception:
         # The boundary is conservatively unknown after committed dispatch intent.
         wire = WireResponse(None, b'', error_code='TRANSPORT_ERROR')
