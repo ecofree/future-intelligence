@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "future-intelligence"
+version = "2.0.1.dev0"
+description = "Auditable probabilistic forecasting research system - initialization slice"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["future_intelligence*"]

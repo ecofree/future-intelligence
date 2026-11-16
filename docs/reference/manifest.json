@@ -1,0 +1,20 @@
+[
+  {
+    "file": "evaluation.md",
+    "sha256": "6a272c2ce044731bd46ff1b0c5eccd985440a9e41b6af653c1157d6468bbdf18",
+    "bytes": 29439,
+    "status": "user_supplied_original_not_independently_verified"
+  },
+  {
+    "file": "sources.md",
+    "sha256": "f3060b877707ead1c45e4c4db0fe9ec2733b1f6149bd1b869970e01bcc281002",
+    "bytes": 10307,
+    "status": "user_supplied_original_not_independently_verified"
+  },
+  {
+    "file": "sample_size_sim.py",
+    "sha256": "b001c2a8b527706fd51f130970af1f6d9f05124b32764b4c2aec7e156e82efb0",
+    "bytes": 749,
+    "status": "user_supplied_original_not_independently_verified"
+  }
+]
