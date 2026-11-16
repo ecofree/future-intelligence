@@ -225,7 +225,7 @@ BEGIN
     RAISE EXCEPTION 'verification does not match registered trust and proof' USING ERRCODE='22023'; END IF;
   upper_at:=(result->>'upper_time')::timestamptz;gen_at:=(result->>'gen_time')::timestamptz;
   IF upper_at IS NULL OR gen_at IS NULL OR upper_at<gen_at OR gen_at>rep.received_at+interval '5 seconds'
-    OR result->>'status' IS DISTINCT FROM CASE WHEN upper_at<=deadline THEN 'VERIFIED' ELSE 'VERIFIED_LATE' END
+    OR result->>'status' IS DISTINCT FROM (CASE WHEN upper_at<=deadline THEN 'VERIFIED' ELSE 'VERIFIED_LATE' END)
     OR (result->>'accuracy_us')::bigint>(b.trust_profile->>'max_accuracy_us')::bigint THEN
     RAISE EXCEPTION 'invalid timestamp time bounds' USING ERRCODE='22023'; END IF;
   SELECT * INTO old FROM fi.anchor_verifications WHERE request_id=r;
