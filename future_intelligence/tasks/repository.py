@@ -6,6 +6,13 @@ from uuid import UUID
 from .spec import validate_registration
 
 
+def uuid_text(value: str | UUID) -> str:
+    """Accept identifiers from JSON strings and psycopg UUID result objects."""
+    if not isinstance(value, (str, UUID)):
+        raise ValueError("identifier must be a UUID or UUID string")
+    return str(value if isinstance(value, UUID) else UUID(value))
+
+
 class TaskRepository:
     def __init__(self, dsn: str):
         self._dsn = dsn
@@ -28,18 +35,18 @@ class TaskRepository:
         return str(self._call("SELECT fi.register_experiment(%s,%s::uuid[],%s,%s)",
                               (key, versions, Jsonb(entries), Jsonb(spec))))
 
-    def bind_worker(self, experiment: str, entry: str, login: str) -> None:
-        self._call("SELECT fi.bind_worker(%s::uuid,%s,%s::name)", (str(UUID(experiment)), entry, login))
+    def bind_worker(self, experiment: str | UUID, entry: str, login: str) -> None:
+        self._call("SELECT fi.bind_worker(%s::uuid,%s,%s::name)", (uuid_text(experiment), entry, login))
 
-    def claim(self, experiment: str, run_kind: str) -> dict | None:
-        return self._call("SELECT fi.claim_task(%s::uuid,%s)", (str(UUID(experiment)), run_kind))
+    def claim(self, experiment: str | UUID, run_kind: str) -> dict | None:
+        return self._call("SELECT fi.claim_task(%s::uuid,%s)", (uuid_text(experiment), run_kind))
 
     @staticmethod
     def _identity(lease: dict) -> tuple:
         fence = lease["fence"]
         if type(fence) is not int or fence < 1:
             raise ValueError("invalid fencing token")
-        return str(UUID(lease["task_id"])), str(UUID(lease["attempt_id"])), fence
+        return uuid_text(lease["task_id"]), uuid_text(lease["attempt_id"]), fence
 
     def heartbeat(self, lease: dict):
         return self._call("SELECT fi.heartbeat_task(%s::uuid,%s::uuid,%s)", self._identity(lease))
@@ -61,20 +68,20 @@ class TaskRepository:
         return self._call("SELECT fi.finish_task(%s::uuid,%s::uuid,%s,NULL,NULL,%s,%s,%s)",
                           self._identity(lease) + (actual_microusd, error_code, retryable))
 
-    def recover(self, experiment: str, limit: int = 100) -> int:
-        return self._call("SELECT fi.recover_tasks(%s::uuid,%s)", (str(UUID(experiment)), limit))
+    def recover(self, experiment: str | UUID, limit: int = 100) -> int:
+        return self._call("SELECT fi.recover_tasks(%s::uuid,%s)", (uuid_text(experiment), limit))
 
-    def reconcile(self, attempt: str, actual_microusd: int, evidence: str,
+    def reconcile(self, attempt: str | UUID, actual_microusd: int, evidence: str,
                   allow_retry: bool = False) -> None:
         self._call("SELECT fi.reconcile_attempt(%s::uuid,%s,%s,%s)",
-                   (str(UUID(attempt)), actual_microusd, evidence, allow_retry))
+                   (uuid_text(attempt), actual_microusd, evidence, allow_retry))
 
-    def cancel(self, task: str, reason: str) -> None:
-        self._call("SELECT fi.cancel_task(%s::uuid,%s)", (str(UUID(task)), reason))
+    def cancel(self, task: str | UUID, reason: str) -> None:
+        self._call("SELECT fi.cancel_task(%s::uuid,%s)", (uuid_text(task), reason))
 
-    def summary(self, experiment: str) -> dict:
+    def summary(self, experiment: str | UUID) -> dict:
         return self._call("SELECT row_to_json(s) FROM fi.experiment_summary s WHERE id=%s::uuid",
-                          (str(UUID(experiment)),))
+                          (uuid_text(experiment),))
 
     def claim_event(self, lease_seconds: int = 30) -> dict | None:
         return self._call("SELECT fi.claim_outbox(%s)", (lease_seconds,))

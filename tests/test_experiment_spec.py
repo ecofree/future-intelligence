@@ -4,7 +4,7 @@ import unittest
 from uuid import uuid4
 
 from future_intelligence.tasks.spec import validate_registration, uniform_ppm
-from future_intelligence.tasks.repository import TaskRepository
+from future_intelligence.tasks.repository import TaskRepository, uuid_text
 from future_intelligence.tasks.fixture_worker import run_once
 
 
@@ -118,3 +118,20 @@ class ExperimentSpecTests(unittest.TestCase):
             def claim(self, experiment, run_kind): return {'run_kind':'FIXTURE'}
             def start_call(self, lease): return False
         with self.assertRaises(RuntimeError): run_once(Fake(),'fixture')
+
+    def test_native_uuid_identifiers_and_cancel(self):
+        value=uuid4()
+        self.assertEqual(uuid_text(value),str(value))
+        self.assertEqual(uuid_text(str(value)),str(value))
+        lease={'task_id':value,'attempt_id':uuid4(),'fence':1}
+        self.assertEqual(TaskRepository._identity(lease)[0],str(value))
+        class Capture(TaskRepository):
+            def _call(self, statement, params=()):
+                self.params=params
+        repo=Capture('unused-fixture')
+        repo.cancel(value,'fixture cancellation')
+        self.assertEqual(repo.params,(str(value),'fixture cancellation'))
+
+    def test_non_uuid_identifier_rejected(self):
+        for value in (None,False,12,{},'not-a-uuid'):
+            with self.subTest(value=value),self.assertRaises(ValueError): uuid_text(value)
