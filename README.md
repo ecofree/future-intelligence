@@ -1,48 +1,45 @@
 # Future Intelligence
 
-**专业未来研究与概率预测系统 · V2.0.1 工程初始化**
+**专业未来研究与概率预测系统 · V2.0.1 工程集成预览**
 
-仓库：`ecofree/future-intelligence`。开发分支：`codex/v2.0.1-bootstrap`。
-核心产品是专业研究系统，不是通用排行榜。代码公开不等于研究服务已经上线。
+仓库：`ecofree/future-intelligence`。当前集成分支：`codex/p0-04-07-integrated-mvp`，PR #6。main尚未合并这些工程批次。
 
-## 当前状态
+核心产品是专业研究系统；多模型竞争和公开记分用于检验能力。代码公开不等于研究服务已经上线。
 
-- 已冻结：V2.0.1 设计基线、ADR-01～10、实施依赖与验收门槛。
-- 已实现：二元 Brier / Log Loss、分箱 RPS、规范化内容承诺、随机 nonce、Merkle 证明、模型调用契约、离线演示及 30 项单元测试。
-- 尚未实现：PostgreSQL、API/工作台、三家真实模型适配器、任务调度、独立裁决、外部时间戳、统计实验引擎和生产安全。
-- **没有真实模型调用、外部时间戳、外部基准成绩或真实前瞻预测。**
-- 本次本地复测通过；远端 CI 状态以对应提交的 GitHub Actions 为准。
+## 当前能力
 
-## 开发入口
+问题与版本/许可冻结、完整实验预登记、任务/预算/恢复账本、统一证据和三家HTTP适配器、完整预测批次承诺、RFC3161校验、独立双人结果判定、历史评分、事件簇统计、最小内部工作台及有界运行命令已经接入。
 
-1. [工程规格](docs/V2.0.1_SPEC.md)：冻结的设计基线与实现边界。
-2. [ADR](docs/adr/README.md)：10 项工程决策。
-3. [实施计划](docs/IMPLEMENTATION_PLAN.md)：按依赖排序的开发与验收任务。
-4. [承诺协议](docs/protocols/commitments.md)：编码和证明格式。
-5. [AGENTS.md](AGENTS.md)：Codex / 工程代理约束。
-6. [本次验证](reports/GITHUB_BOOTSTRAP.md)：复测和发布边界。
+代码验收提交 `a0f4d7d` 的完整163项离线测试和同一套124项PostgreSQL集成测试通过；PostgreSQL16/17实际重启与恢复检查通过。
 
-## 克隆与运行
+**三家真实模型验收、独立外部TSA、真实未来事件结算与生产部署仍未完成。** 本地测试CA、合成事件、模拟费用均不计入真实成绩。P0-07尚不能称生产验收通过。
 
-需要 Python 3.11 或以上。核心测试和演示只用标准库，不需要模型 API 密钥。
+## 启动与文档
 
 ```bash
-git clone --branch codex/v2.0.1-bootstrap https://github.com/ecofree/future-intelligence.git
+git clone --branch codex/p0-04-07-integrated-mvp https://github.com/ecofree/future-intelligence.git
 cd future-intelligence
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install '.[postgres,web]'
 python -m unittest discover -s tests -v
 python -m future_intelligence
 ```
 
-演示只验证本地计算和内容完整性。`external_timestamp_status=NOT_REQUESTED` 表示没有第三方时间证明。不得将模拟分数计入真实成绩。
+Python3.11+、OpenSSL3；数据库用PostgreSQL16/17。最后一个命令仍是明确标记的离线演示，不会调用真实模型。
 
-## 下一批实施
+数据库角色、时间证明、结果确认、统计、导出和工作台启动见 **[集成运行说明](docs/P0_04_07_RUNBOOK.md)**。密钥由环境安全注入，应用不自动载入.env；不要把密钥贴到仓库、Issue或聊天里。
 
-从 P0-01 开始：PostgreSQL 迁移、问题版本、冻结约束、UTC/原时区、事件簇和来源授权门控。随后实现实验任务账本和真实模型适配器。每批以对应验收为准，不以接口或类名存在视为完成。
+- [冻结规格](docs/V2.0.1_SPEC.md)与[实施门槛](docs/IMPLEMENTATION_PLAN.md)
+- [当前验收索引](reports/VALIDATION.md)与[本批真实测试结果/限制](reports/P0_04_07_VALIDATION.md)
+- [P0-01数据库](docs/P0_01_DATABASE.md)、[P0-02任务账本](docs/P0_02_TASK_LEDGER.md)、[P0-03模型接口](docs/P0_03_PROVIDERS.md)
+- [工程代理规则](AGENTS.md)、[ADR目录](docs/adr/README.md)，本批新增ADR-014～017
+- [真实供应商验收 #5](https://github.com/ecofree/future-intelligence/issues/5)与[实际上线验收 #7](https://github.com/ecofree/future-intelligence/issues/7)
 
-## 发布与资料边界
+## 安全与发布边界
 
-仓库已由所有者手动创建，不要再运行用于创建新私有仓库的 `scripts/publish_github.sh`；该脚本作为初始化包历史工具保留，遇到已有同名仓库会拒绝操作。
+内部工作台只监听127.0.0.1，裁决人不读预测和评分；生产远程访问另行加固。内部导出包含研究内容，不自动发布。签名证明绑定的内容和时间，不自动证明来源事实、供应商身份或预测能力。
 
-公开提交不包含用户原始 `evaluation.md`、`sources.md` 和 `sample_size_sim.py`；仅保留其 SHA-256 清单。原件仍在对话上传及本地初始化包中，见 [材料说明](docs/PROVENANCE.md)。后续代理无需等待原件即可按照工程规格开发；引用其具体外部陈述时应重新核查。
+不提交.env、访问密钥、证书私钥、账单、真实研究数据或未经许可的原文。原始评估附件不在公开仓库，仅保留指纹与材料说明。未选择开源许可证。
 
-未选择开源许可证。不提交 `.env`、访问密钥、真实研究数据或未经许可的第三方原文。本地测试通过不代表完整 MVP 或生产验收通过。
+仓库已存在，不要运行初始化历史工具 `scripts/publish_github.sh` 去创建新仓库。所有正式阶段以证据和验收为准，不以代码量、Agent数量或模拟分数判断成功。
