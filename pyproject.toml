@@ -11,3 +11,9 @@ dependencies = []
 
 [tool.setuptools.packages.find]
 include = ["future_intelligence*"]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]==3.3.9"]
+
+[tool.setuptools.package-data]
+"future_intelligence.db" = ["migrations/*.sql"]
