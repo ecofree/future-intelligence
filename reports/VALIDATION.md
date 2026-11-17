@@ -2,7 +2,7 @@
 
 更新：2026-11-17。状态与具体提交绑定；新验收不改写旧报告。
 
-- [累积列表分页与只读迁移审计](CUMULATIVE_PAGINATION_VALIDATION.md)：独立于未推送的本地integration分支；本地新增25项局部测试通过，完整CI待实际复跑。没有模型请求、没有改迁移、没有创建FORMAL。交接边界见docs/OFFICIAL_RETEST_HANDOFF_GAPS.md。
+- [累积列表分页与只读迁移审计](CUMULATIVE_PAGINATION_VALIDATION.md)：代码`097ce460`；256项完整离线、同一套164项PG16/17回归、实际205记录Chromium分页、远端13→14临时库升级、重启/备份和打包检查成功。保留首轮测试模块同名冲突及修复记录。用户未推送integration分支及两份0014/0015未见，不冒充其升级验收；没有新增模型请求、迁移或FORMAL。最终文档提交检查与未合并状态见PR #11。
 - [Grok 实测缺陷修复](CONTRACT_FIX_VALIDATION.md)：代码`a31e1e9`，显式类别合同v2与正式端点配置约束；231项完整离线、158项真实数据库测试在PG16/17通过，重启恢复、Docker/Chromium与安装包检查成功。本轮没有真实模型调用；新版官方请求与现实结算仍待验收。Grok本地兼容改动和额外迁移尚未出现在远端，部署前须整合，不能覆盖。复测说明见docs/CONTRACT_FIX_RETEST.md；最终文档提交/合并状态以PR #10记录为准。
 - [工程预览基线 2.0.1.dev1](PREVIEW_BASELINE_VALIDATION.md)：代码 `aa25ddec`；211 项完整离线、148 项真实 PostgreSQL 测试在16/17通过，重启恢复、Docker/Chromium 复验成功；Python3.11/3.13实际构建与安装核对50个包文件和13个迁移。主分支最终收束 SHA 和自身 CI 以 PR #9 收束记录为准。
 - [运行准备与隔离部署](OPERATIONAL_READINESS_VALIDATION.md)：历史代码 `1138fc2`；191 项离线、148 项数据库，保留当时的失败修复与边界。
@@ -14,4 +14,4 @@
 
 当前是可在隔离环境部署、进行受控集成测试的内部工程预览，不是用户生产部署或完整真实模型/TSA/前瞻验收。测试 CA 不等于独立 TSA，合成事件不等于真实成绩，同集群还原不等于跨主机灾备，日志告警不等于通知送达，本地配置存在不等于凭证验证。
 
-实际运行门槛继续跟踪 #5/#7。操作：[真实验收交接](../docs/LIVE_ACCEPTANCE_HANDOFF.md)、[运行与部署](../docs/OPERATIONAL_READINESS.md)、[原集成说明](../docs/P0_04_07_RUNBOOK.md)。范围：[实施计划](../docs/IMPLEMENTATION_PLAN.md)。
+实际运行门槛继续跟踪 #5/#7。操作：[真实验收交接](../docs/LIVE_ACCEPTANCE_HANDOFF.md)、[本地交接缺口](../docs/OFFICIAL_RETEST_HANDOFF_GAPS.md)、[运行与部署](../docs/OPERATIONAL_READINESS.md)、[原集成说明](../docs/P0_04_07_RUNBOOK.md)。范围：[实施计划](../docs/IMPLEMENTATION_PLAN.md)。
