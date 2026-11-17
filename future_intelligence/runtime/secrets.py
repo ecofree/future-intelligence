@@ -14,7 +14,11 @@ def read_secret(name: str, environ=None, *, required=True) -> str | None:
         value = direct
     else:
         path = Path(filename)
-        fd = os.open(path, os.O_RDONLY | getattr(os,'O_NOFOLLOW',0))
+        # Reject FIFOs/devices after open without blocking on a FIFO writer.
+        # O_NOFOLLOW also prevents a final-component symlink swap before open.
+        flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+        flags |= getattr(os, 'O_NONBLOCK', 0) | getattr(os, 'O_CLOEXEC', 0)
+        fd = os.open(path, flags)
         try:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or not 1 <= info.st_size <= 65536:
