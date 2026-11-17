@@ -30,13 +30,17 @@ class LiveEvidenceTests(unittest.TestCase):
     question=previous.TaskLedgerTests.question
     state=previous.TaskLedgerTests.state
 
-    def make(self, provider='openai', models=1, sealed=True, **changes):
+    def make(self, provider='openai', models=1, sealed=True, operation_mode='DIAGNOSTIC', **changes):
         vid,pid=self.question()
         sid=self.admin('SELECT source_id FROM fi.source_permissions WHERE id=%s',(pid,))
         cfgs=[dict(fixture.entry(provider),entry_key=f'model-{i}') for i in range(models)]
         spec=previous.experiment_spec(run_kind='LIVE',budget_microusd=100000000,
              attempt_cap_microusd=1000000,lease_seconds=120,**changes)
         e=self.r['operator'].register('live-test-'+uuid4().hex,[vid],cfgs,spec)
+        # Explicit API-contract diagnostics, never formal predictive evidence.
+        if operation_mode is not None:
+            self.call('operator','SELECT fi.configure_operation(%s,%s,%s,%s,%s)',
+                      (e,operation_mode,5,3600,'Synthetic API contract test; not a prospective experiment'))
         self.r['operator'].bind_worker(e,'model-0',self.logins['worker'])
         self.r['operator'].bind_worker(e,'model-0' if models==1 else 'model-1',self.logins['worker2'])
         packets=[{'question_version_id':vid,'items':[{'id':'e1','source_id':str(sid),'permission_id':str(pid),
