@@ -1,4 +1,4 @@
-"""Disposable DB: verify the accessible remote 13->14 upgrade, not Grok's unseen 0015."""
+"""Disposable databases only; preserve the original remote 13->14 regression."""
 import importlib
 import importlib.util
 from importlib.resources import files
@@ -33,15 +33,20 @@ class RemoteBaselineUpgradeTests(unittest.TestCase):
                     sid=c.execute('SELECT fi.register_source(%s,%s)',('SYNTHETIC UPGRADE ROW','https://example.invalid/upgrade')).fetchone()[0]
                     before=c.execute('SELECT to_jsonb(s) FROM fi.sources s WHERE id=%s',(sid,)).fetchone()[0]
                     hashes=dict(c.execute('SELECT version,sha256 FROM fi_meta.schema_migrations').fetchall())
-                self.assertEqual(migration.migrate(dsn),['0014_explicit_forecast_contract.sql'])
+                # Keep this original test specifically about PR10's remote 13->14.
+                # The combined 16/17-file paths are tested independently below.
+                explicit='0014_explicit_forecast_contract.sql'
+                (target/explicit).write_bytes(files('future_intelligence.db').joinpath('migrations',explicit).read_bytes())
+                with patch.object(migration,'files',return_value=root):
+                    self.assertEqual(migration.migrate(dsn),[explicit])
+                    self.assertEqual(migration.migrate(dsn),[])
                 with psycopg.connect(dsn) as c:
                     self.assertEqual(c.execute('SELECT to_jsonb(s) FROM fi.sources s WHERE id=%s',(sid,)).fetchone()[0],before)
                     after=dict(c.execute('SELECT version,sha256 FROM fi_meta.schema_migrations').fetchall())
                 self.assertTrue(all(after[n]==h for n,h in hashes.items()))
-                self.assertEqual(migration.migrate(dsn),[])
                 spec=importlib.util.spec_from_file_location('fi_upgrade_audit',Path(__file__).resolve().parents[2]/'scripts/audit_migrations.py')
                 tool=importlib.util.module_from_spec(spec);spec.loader.exec_module(tool)
-                self.assertEqual(tool.audit(dsn)['status'],'MATCH')
+                self.assertEqual(tool.audit(dsn,target)['status'],'MATCH')
         finally:
             with psycopg.connect(previous.DSN,autocommit=True) as admin:
                 admin.execute(sql.SQL('DROP DATABASE {}').format(sql.Identifier(name)))

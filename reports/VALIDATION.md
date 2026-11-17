@@ -4,9 +4,7 @@
 
 ## 当前整合
 
-已取得 `integration/pr10-official-retest` 的 `4d4b91a` 与脱敏交接包，正在合入 PR #11 的 `c9cbcae`；保留双方提交历史、两份0014和0015的原始字节。尚未运行本整合提交的完整CI，不沿用任一父分支的成功状态。
-
-交接ZIP SHA256：`43603dac7312eb005d5c04b8740cdcc2ce76fd03b094be1b72314054b2aade9f`，内含21项清单哈希均已核对。脱敏材料不在公开仓库发布；它们是运行方提供的历史证据，不是当前执行环境重放的真实API结果。
+[Terra整合与显式请求合同](TERRA_INTEGRATION_VALIDATION.md)：已取得integration/pr10-official-retest的4d4b91a与脱敏交接包，以双父提交bce7458整合PR11的c9cbcae；保留双方历史和原16份SQL。新0016固定官方Terra生成参数。当前提交的完整CI结果须按本批PR实际记录，不沿用父分支状态。操作与历史差异分析见[官方复测说明](../docs/OFFICIAL_TERRA_RETEST.md)。
 
 ## 已有报告（保持各自时点与范围）
 

@@ -81,6 +81,39 @@ def _integer(value, low: int, high: int) -> bool:
     return type(value) is int and low <= value <= high
 
 
+def terra_generation_profile() -> dict:
+    """Frozen opt-in contract; omissions are explicit, not determinism claims.
+
+    Applies only to official gpt-6.1-terra + Responses + prompt v2. A caller must
+    register a NEW DIAGNOSTIC before using these changed request bytes formally.
+    See docs/OFFICIAL_TERRA_RETEST.md for dated support sources and alias limits.
+    """
+    return {
+        "protocol": "fi.openai-generation.v1",
+        "reasoning": {"effort": "medium", "mode": "standard"},
+        "service_tier": "default",
+        "temperature": "OMIT_UNSUPPORTED_WITH_REASONING",
+        "top_p": "OMIT_UNSUPPORTED_WITH_REASONING",
+        "seed": "OMIT_NOT_DOCUMENTED_IN_RESPONSES",
+    }
+
+
+def generation_wire(entry: dict) -> dict:
+    """Only the two supported wire fields leave the frozen generation profile."""
+    try:
+        p = entry["parameters"]
+        if "generation" not in p:
+            return {}  # Preserve byte-for-byte legacy DIAGNOSTIC behavior.
+        if (entry["provider"] != "openai" or entry["model_id"] != "gpt-6.1-terra"
+                or entry["prompt_sha256"] != PROMPT_V2_SHA256
+                or encode(p["generation"]) != encode(terra_generation_profile())):
+            raise ValueError
+        return {"reasoning": {"effort": "medium", "mode": "standard"},
+                "service_tier": "default"}
+    except (KeyError, TypeError, ValueError, OverflowError):
+        raise Blocked("INVALID_GENERATION_PROFILE") from None
+
+
 def validate_entry(entry: dict, cap: int, now: datetime | None = None) -> dict:
     """No arbitrary parameter pass-through. Rates are operator-supplied quotes.
 
@@ -104,6 +137,9 @@ def validate_entry(entry: dict, cap: int, now: datetime | None = None) -> dict:
                 compatible.validate_profile(p.get("endpoint"))
             except compatible.EndpointError:
                 raise Blocked("INVALID_ENDPOINT_PROFILE") from None
+        if "generation" in p:
+            generation_wire(entry)
+            wanted = wanted | {"generation"}
         if set(p) != wanted:
             raise ValueError
         if not _integer(p["max_output_tokens"], 128, 16384) or not _integer(p["timeout_seconds"], 1, 120):
@@ -192,6 +228,7 @@ def output_schema_v2(category_count: int, provider: str) -> dict:
 def build_request(entry: dict, input_data: dict) -> str:
     """Return the exact uncredentialed UTF-8 JSON body to register before sending."""
     p = entry["parameters"]
+    generation = generation_wire(entry)
     prompt = PROMPTS.get(entry.get('prompt_sha256'))
     if prompt is None:
         raise Blocked('PROMPT_HASH_MISMATCH')
@@ -241,6 +278,7 @@ def build_request(entry: dict, input_data: dict) -> str:
                 "response_format": compatible_response_format(p["endpoint"], schema)}
     else:
         raise Blocked("UNSUPPORTED_PROVIDER")
+    body.update(generation)
     return encode(body).decode()
 
 
