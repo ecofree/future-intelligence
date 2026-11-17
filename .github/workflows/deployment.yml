@@ -1,0 +1,58 @@
+name: Disposable deployment and browser
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  compose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.13'
+      - name: Generate disposable private secrets and start local deployment
+        run: |
+          echo "FI_UID=$(id -u)" >> "$GITHUB_ENV"
+          echo "FI_GID=$(id -g)" >> "$GITHUB_ENV"
+          export FI_UID=$(id -u) FI_GID=$(id -g)
+          python deploy/configure.py
+          docker compose -f deploy/compose.yaml config --quiet
+          docker compose -f deploy/compose.yaml up --build -d web
+          for n in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8080/readyz; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Re-run setup without changing credentials or migrations
+        run: docker compose -f deploy/compose.yaml run --rm -T setup
+      - name: Write synthetic records (no model or TSA network)
+        run: docker compose -f deploy/compose.yaml run --rm -T -e FI_SYNTHETIC_DEPLOYMENT_TEST=1 setup python - < deploy/seed_smoke.py
+      - name: Verify database failure is visible and restart recovers
+        run: |
+          docker compose -f deploy/compose.yaml stop db
+          code=$(curl -s -o /tmp/fi-readiness.json -w '%{http_code}' http://127.0.0.1:8080/readyz)
+          test "$code" = 503
+          docker compose -f deploy/compose.yaml start db
+          for n in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8080/readyz; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Restore backup into new database and compare all table contents
+        run: |
+          bash deploy/backup.sh /tmp/fi-private-backup
+          FI_COMPARE_QUIESCENT=1 bash deploy/restore-drill.sh /tmp/fi-private-backup
+      - name: Install headless browser
+        run: |
+          python -m pip install playwright==1.65.2
+          python -m playwright install --with-deps chromium
+      - name: Actual Chromium workbench acceptance
+        run: python deploy/browser_smoke.py
+      - name: Stop only this disposable stack (no secret or research artifacts uploaded)
+        if: always()
+        run: docker compose -f deploy/compose.yaml down -v
