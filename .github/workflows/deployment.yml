@@ -53,6 +53,12 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Actual Chromium workbench acceptance
         run: python deploy/browser_smoke.py
+      - name: Safe startup diagnostics on failure
+        if: failure()
+        run: |
+          docker compose -f deploy/compose.yaml ps -a
+          docker compose -f deploy/compose.yaml logs --tail 40 web setup
+          docker compose -f deploy/compose.yaml exec -T web python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/readyz',timeout=3).status)" || true
       - name: Stop only this disposable stack (no secret or research artifacts uploaded)
         if: always()
         run: docker compose -f deploy/compose.yaml down -v

@@ -41,6 +41,7 @@ services:
 
   web:
     <<: *app
+    networks: [database, webedge]
     command: [python, -m, future_intelligence.runtime, serve, --container-bind]
     environment:
       FI_DASHBOARD_DATABASE_URL_FILE: /run/secrets/dashboard_dsn
@@ -111,6 +112,7 @@ volumes:
 networks:
   database: {internal: true}
   outbound: {}
+  webedge: {}
 secrets:
   db_password: {file: ./.local-secrets/db_password}
   migration_dsn: {file: ./.local-secrets/migration_dsn}
