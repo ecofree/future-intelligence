@@ -29,14 +29,33 @@ PROVIDER_KEYS = {
 }
 
 
+COMPATIBLE = 'openai_compatible'
+
+
 def inspect_configuration(role: str, provider: str | None = None,
-                          environ: Mapping[str, str] | None = None) -> dict:
-    """Inspect only explicitly named role inputs; never return values or paths."""
+                          environ: Mapping[str, str] | None = None,
+                          endpoint: str | None = None) -> dict:
+    """Inspect only explicitly named role inputs; never return values or paths.
+
+    For ``openai_compatible`` the key variable comes from the named endpoint
+    profile in the local registry (presets plus FI_COMPATIBLE_PROVIDERS_FILE).
+    """
     if role not in ROLE_SECRETS:
         raise ValueError('unknown role')
-    if (role == 'worker' and provider not in PROVIDER_KEYS) or (role != 'worker' and provider is not None):
+    allowed = tuple(PROVIDER_KEYS) + (COMPATIBLE,)
+    if (role == 'worker' and provider not in allowed) or (role != 'worker' and provider is not None):
         raise ValueError('provider is required only for worker')
-    names = ROLE_SECRETS[role] + ((PROVIDER_KEYS[provider],) if provider else ())
+    if (provider == COMPATIBLE) != (endpoint is not None):
+        raise ValueError('endpoint is required only for openai_compatible')
+    if provider == COMPATIBLE:
+        from future_intelligence.providers.compatible import EndpointError, endpoint as lookup
+        try:
+            key_name = lookup(endpoint, environ)['api_key_env']
+        except EndpointError:
+            raise ValueError('unknown or invalid endpoint profile') from None
+    else:
+        key_name = PROVIDER_KEYS[provider] if provider else None
+    names = ROLE_SECRETS[role] + ((key_name,) if key_name else ())
     checks = []
     for name in names:
         try:
@@ -50,6 +69,7 @@ def inspect_configuration(role: str, provider: str | None = None,
     present = all(c['status'] == 'PRESENT_NOT_VALIDATED' for c in checks)
     return {
         'protocol': 'fi.local-preflight.v1', 'role': role, 'provider': provider,
+        **({'endpoint': endpoint} if endpoint is not None else {}),
         'status': 'LOCAL_CONFIGURATION_PRESENT_UNVERIFIED' if present else 'BLOCKED_LOCAL_CONFIGURATION',
         'checks': checks, 'network_attempted': False, 'database_connected': False,
         'provider_verified': False, 'external_timestamp_verified': False,
@@ -60,11 +80,17 @@ def inspect_configuration(role: str, provider: str | None = None,
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--role', choices=sorted(ROLE_SECRETS), required=True)
-    parser.add_argument('--provider', choices=sorted(PROVIDER_KEYS))
+    parser.add_argument('--provider', choices=sorted(PROVIDER_KEYS) + [COMPATIBLE])
+    parser.add_argument('--endpoint', help='registered endpoint name; only with --provider openai_compatible')
     args = parser.parse_args(argv)
     if (args.role == 'worker') != (args.provider is not None):
         parser.error('--provider is required only for --role worker')
-    result = inspect_configuration(args.role, args.provider)
+    if (args.provider == COMPATIBLE) != (args.endpoint is not None):
+        parser.error('--endpoint is required only for --provider openai_compatible')
+    try:
+        result = inspect_configuration(args.role, args.provider, endpoint=args.endpoint)
+    except ValueError:
+        parser.error('unknown or invalid endpoint profile')
     print(json.dumps(result, sort_keys=True))
     return 0 if result['status'] == 'LOCAL_CONFIGURATION_PRESENT_UNVERIFIED' else 2
 

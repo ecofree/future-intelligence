@@ -52,6 +52,41 @@ Python3.11+、OpenSSL3，数据库回归覆盖 PostgreSQL16/17。演示命令明
 - [P0-01 数据库](docs/P0_01_DATABASE.md)、[P0-02 账本](docs/P0_02_TASK_LEDGER.md)、[P0-03 模型接口](docs/P0_03_PROVIDERS.md)、[工程代理规则](AGENTS.md)
 - [真实供应商验收 #5](https://github.com/ecofree/future-intelligence/issues/5)、[实际运行验收 #7](https://github.com/ecofree/future-intelligence/issues/7)
 
+## 添加模型供应商
+
+官方三家（`openai`、`anthropic`、`google`）固定主机。其他提供 OpenAI Chat Completions 兼容接口的服务使用 `openai_compatible`，**只改配置，不改代码**（设计见 [ADR-020](docs/adr/020-openai-compatible-providers.md)）。
+
+1. 选择端点档案。内置预设：`deepseek`、`dashscope`（通义千问国内）、`dashscope-intl`、`openrouter`、`xai`。中转网关或自建端点写入仓库外的 JSON 文件，并用 `FI_COMPATIBLE_PROVIDERS_FILE` 指向它（同名会覆盖预设）：
+
+   ```json
+   [{"name": "my-relay", "base_url": "https://relay.example.com/v1",
+     "api_key_env": "MY_RELAY_API_KEY", "response_format": "json_object"}]
+   ```
+
+   `base_url` 只能是 `https://域名[/路径]`；`api_key_env` 是**变量名**，不是密钥，且不能以 `FI_` 开头；端点支持结构化输出时用 `json_schema`，否则用 `json_object`。
+2. 在参赛配置中冻结完整档案（模型 ID 可含一个 `/`，如 OpenRouter 的 `deepseek/deepseek-chat`）：
+
+   ```python
+   from future_intelligence.providers.compatible import endpoint
+   from future_intelligence.providers.live import PROMPT_SHA256
+   entry = {"entry_key": "deepseek-chat", "provider": "openai_compatible", "model_id": "deepseek-chat",
+            "prompt_sha256": PROMPT_SHA256,
+            "parameters": {"max_output_tokens": 1024, "timeout_seconds": 60, "input_token_ceiling": 16384,
+                           "endpoint": endpoint("deepseek"),
+                           "price_quote": {"input_microusd_per_million": 270000, "output_microusd_per_million": 1100000,
+                                           "valid_until": "2026-12-01T00:00:00Z",
+                                           "source": "https://api-docs.deepseek.com/quick_start/pricing"}}}
+   ```
+
+   价格必须按当期官方价目填写，上例数字仅示意。
+3. worker 进程只注入该端点的密钥变量（如 `DEEPSEEK_API_KEY`）与 `FI_WORKER_DATABASE_URL`，先预检：
+
+   ```bash
+   python -m future_intelligence.runtime.preflight --role worker --provider openai_compatible --endpoint deepseek
+   ```
+
+   发送前 worker 会核对冻结档案与本机注册表逐字段一致，不一致记为 `ENDPOINT_NOT_REGISTERED`，不联网。之后按[模型接口](docs/P0_03_PROVIDERS.md)先做 LIVE + DIAGNOSTIC 小额实测。
+
 ## 安全与发布边界
 
 默认只向本机发布工作台，数据库不发布端口；远程 TLS、身份、限速和主机安全另行加固。应用不自动载入 .env，凭证通过环境或明确私有文件注入。内部导出含研究内容，不自动公开。签名绑定内容和时间，不自动证明资料真实、供应商身份或预测能力。

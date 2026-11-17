@@ -11,8 +11,8 @@ import os
 import sys
 
 from future_intelligence.providers.live import (
-    Blocked, HTTPSOnce, KEYS, WireResponse, build_request, credentials,
-    estimated_cost, parse_response, validate_entry,
+    COMPATIBLE, Blocked, HTTPSOnce, KEYS, WireResponse, build_request, credentials,
+    credentials_for, estimated_cost, parse_response, validate_entry,
 )
 
 
@@ -24,7 +24,7 @@ def run_once(repo, experiment: str, transport=None, environ=None) -> dict:
     identity = {'task_id': lease['task_id'], 'attempt_id': lease['attempt_id'], 'run_kind': 'LIVE'}
     try:
         entry = validate_entry(lease['entry'], lease['cap_microusd'])
-        key = credentials(entry['provider'], environ)
+        key = credentials_for(entry, environ)
         context = repo.context(lease)
         body = build_request(entry, context)
         lease_end = datetime.fromisoformat(lease['lease_until'].replace('Z', '+00:00'))
@@ -44,8 +44,9 @@ def run_once(repo, experiment: str, transport=None, environ=None) -> dict:
         if remaining < entry['parameters']['timeout_seconds'] + 5:
             wire = WireResponse(None, b'', error_code='TIMEOUT')
         else:
+            extra = {'endpoint': entry['parameters']['endpoint']} if entry['provider'] == COMPATIBLE else {}
             wire = wire_client.send(entry['provider'], entry['model_id'], body, key,
-                                    entry['parameters']['timeout_seconds'])
+                                    entry['parameters']['timeout_seconds'], **extra)
     except Exception:
         # The boundary is conservatively unknown after committed dispatch intent.
         wire = WireResponse(None, b'', error_code='TRANSPORT_ERROR')

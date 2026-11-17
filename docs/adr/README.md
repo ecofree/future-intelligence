@@ -26,5 +26,8 @@
 - [ADR-015 盲化裁决与历史评分](015-blind-outcome-score-history.md)
 - [ADR-016 预登记统计与最小工作台](016-fixed-batch-statistics-workbench.md)
 - [ADR-017 工程运行与前瞻验收分开](017-operational-versus-prospective-acceptance.md)
+- [ADR-018 运行入场与本地部署](018-operational-admission-and-local-deployment.md)
+- [ADR-019 工程基线与本地预检](019-preview-baseline-and-offline-preflight.md)
+- [ADR-020 配置驱动的 OpenAI 兼容供应商](020-openai-compatible-providers.md)
 
 各实现的真实测试、残余风险和外部依赖，以[验收索引](../../reports/VALIDATION.md)和Issue #5/#7为准。

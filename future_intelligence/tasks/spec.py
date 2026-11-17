@@ -44,7 +44,7 @@ def validate_registration(versions: list[str], entries: list[dict], spec: dict) 
         raise ValueError("duplicate question version")
     if not isinstance(entries, list) or not 1 <= len(entries) <= 10:
         raise ValueError("need 1-10 entries")
-    allowed = ("fixture",) if spec["run_kind"] == "FIXTURE" else ("openai", "anthropic", "google")
+    allowed = ("fixture",) if spec["run_kind"] == "FIXTURE" else ("openai", "anthropic", "google", "openai_compatible")
     names = []
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) != ENTRY_KEYS:

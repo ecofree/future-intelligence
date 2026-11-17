@@ -2,6 +2,7 @@
 
 更新：2026-11-17。状态与具体提交绑定；新验收不改写旧报告。
 
+- [OpenAI 真实诊断调用与 OpenAI 兼容供应商](OPENAI_COMPATIBLE_VALIDATION.md)：分支 `feat/openai-compatible-providers`；OpenAI 二元题真实调用 OK、分箱题输出维度错误 3/3；236 项离线、153 项 PostgreSQL 17 测试通过。仅 DIAGNOSTIC，不关闭 #5。
 - [工程预览基线 2.0.1.dev1](PREVIEW_BASELINE_VALIDATION.md)：代码 `aa25ddec`；211 项完整离线、148 项真实 PostgreSQL 测试在16/17通过，重启恢复、Docker/Chromium 复验成功；Python3.11/3.13实际构建与安装核对50个包文件和13个迁移。主分支最终收束 SHA 和自身 CI 以 PR #9 收束记录为准。
 - [运行准备与隔离部署](OPERATIONAL_READINESS_VALIDATION.md)：历史代码 `1138fc2`；191 项离线、148 项数据库，保留当时的失败修复与边界。
 - [P0-04～07 集成工程](P0_04_07_VALIDATION.md)：历史代码 `a0f4d7d`；163 项离线、124 项数据库。
