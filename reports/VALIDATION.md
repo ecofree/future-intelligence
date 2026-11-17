@@ -2,6 +2,7 @@
 
 更新：2026-11-17。状态与具体提交绑定；新验收不改写旧报告。
 
+- [Grok 实测缺陷修复](CONTRACT_FIX_VALIDATION.md)：显式类别合同v2与正式端点配置约束；新增20项本地离线回归通过。全仓/数据库/部署检查以本批实际提交的CI结果为准；新版真实模型请求与现实结算尚未验收。复测步骤见 docs/CONTRACT_FIX_RETEST.md。
 - [工程预览基线 2.0.1.dev1](PREVIEW_BASELINE_VALIDATION.md)：代码 `aa25ddec`；211 项完整离线、148 项真实 PostgreSQL 测试在16/17通过，重启恢复、Docker/Chromium 复验成功；Python3.11/3.13实际构建与安装核对50个包文件和13个迁移。主分支最终收束 SHA 和自身 CI 以 PR #9 收束记录为准。
 - [运行准备与隔离部署](OPERATIONAL_READINESS_VALIDATION.md)：历史代码 `1138fc2`；191 项离线、148 项数据库，保留当时的失败修复与边界。
 - [P0-04～07 集成工程](P0_04_07_VALIDATION.md)：历史代码 `a0f4d7d`；163 项离线、124 项数据库。
