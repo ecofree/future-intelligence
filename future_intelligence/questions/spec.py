@@ -88,3 +88,28 @@ def outcome_bin(value: str, edges: list[str]) -> int:
     if any(a >= b for a, b in zip(bounds, bounds[1:])):
         raise ValueError("boundaries must increase")
     return sum(number >= bound for bound in bounds)
+
+
+def answer_contract(spec: dict[str, Any]) -> dict[str, Any]:
+    """Explicit model answer space, derived only from the frozen question v1.
+
+    This does not change outcome_bin or score semantics. Null endpoints denote
+    unbounded intervals; finite lower bounds are included, upper bounds excluded.
+    """
+    value = validate_spec(spec)
+    if value['question_type'] == 'binary':
+        categories = [{'index': 0, 'label': 'No'}, {'index': 1, 'label': 'Yes'}]
+    else:
+        edges = value['bin_edges']
+        categories = []
+        for index in range(len(edges) + 1):
+            lower = edges[index - 1] if index else None
+            upper = edges[index] if index < len(edges) else None
+            label = (f'x < {upper}' if lower is None else
+                     f'x >= {lower}' if upper is None else f'{lower} <= x < {upper}')
+            categories.append({'index': index, 'label': label, 'lower': lower,
+                               'upper': upper, 'lower_inclusive': lower is not None,
+                               'upper_inclusive': False})
+    return {'protocol': 'fi.answer-contract.v2', 'category_count': len(categories),
+            'probability_total_ppm': 1000000, 'unit': value['unit'],
+            'categories': categories}
