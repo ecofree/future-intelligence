@@ -1,0 +1,5 @@
+.local-secrets/
+backups/
+*.dump
+*.pem
+*.key

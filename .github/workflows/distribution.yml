@@ -1,0 +1,64 @@
+name: Distribution acceptance
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  installed-wheel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build wheel and compare every packaged file with tracked source
+        shell: bash
+        run: |
+          set -euo pipefail
+          scratch=$(mktemp -d "$RUNNER_TEMP/fi-distribution.XXXXXX")
+          echo "FI_DISTRIBUTION_DIR=$scratch" >> "$GITHUB_ENV"
+          python scripts/check_distribution.py snapshot "$scratch/source.json"
+          python -m pip wheel . --no-deps --wheel-dir "$scratch/wheels"
+          wheels=("$scratch"/wheels/*.whl)
+          test "${#wheels[@]}" = 1
+          python scripts/check_distribution.py wheel "$scratch/source.json" "${wheels[0]}"
+          python -m venv "$scratch/venv"
+          "$scratch/venv/bin/python" -m pip install "${wheels[0]}[postgres,web]"
+          cp scripts/check_distribution.py "$scratch/check_distribution.py"
+      - name: Verify installed package outside checkout with isolated Python
+        working-directory: /tmp
+        shell: bash
+        run: |
+          set -euo pipefail
+          python="$FI_DISTRIBUTION_DIR/venv/bin/python"
+          "$python" -I "$FI_DISTRIBUTION_DIR/check_distribution.py" installed "$FI_DISTRIBUTION_DIR/source.json"
+          "$python" -I -m future_intelligence > "$FI_DISTRIBUTION_DIR/demo.json"
+          set +e
+          "$python" -I -m future_intelligence.runtime.preflight --role operator > "$FI_DISTRIBUTION_DIR/preflight.json"
+          result=$?
+          set -e
+          test "$result" = 2
+          "$python" -I - "$FI_DISTRIBUTION_DIR" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          demo = json.loads((root / 'demo.json').read_text())
+          assert demo['content_integrity_valid'] is True
+          assert demo['external_timestamp_status'] == 'NOT_REQUESTED'
+          assert demo['commitment']['payload']['run_kind'] == 'MOCK_OFFLINE_DEMO'
+          report = json.loads((root / 'preflight.json').read_text())
+          assert report['status'] == 'BLOCKED_LOCAL_CONFIGURATION'
+          assert report['network_attempted'] is False
+          assert report['production_acceptance'] is False
+          print('PASS: installed wheel, migrations, offline demo and no-network preflight; not live acceptance.')
+          PY

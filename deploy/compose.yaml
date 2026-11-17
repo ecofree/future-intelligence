@@ -1,0 +1,128 @@
+x-app: &app
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  user: "${FI_UID:-1000}:${FI_GID:-1000}"
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 128
+  mem_limit: 512m
+  networks: [database]
+
+services:
+  db:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: fi
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes: [database:/var/lib/postgresql/data]
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d fi"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  setup:
+    <<: *app
+    command: [python, /app/deploy/bootstrap.py]
+    environment:
+      FI_MIGRATION_DATABASE_URL_FILE: /run/secrets/migration_dsn
+      FI_BOOTSTRAP_CONFIG_FILE: /run/secrets/bootstrap
+    secrets: [migration_dsn, bootstrap]
+    depends_on:
+      db: {condition: service_healthy}
+    restart: "no"
+
+  web:
+    <<: *app
+    networks: [database, webedge]
+    command: [python, -m, future_intelligence.runtime, serve, --container-bind]
+    environment:
+      FI_DASHBOARD_DATABASE_URL_FILE: /run/secrets/dashboard_dsn
+      FI_DASHBOARD_TOKEN_FILE: /run/secrets/dashboard_token
+    secrets: [dashboard_dsn, dashboard_token]
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      setup: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz',timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: on-failure:3
+
+  operator:
+    <<: *app
+    profiles: [operations]
+    command: [python, -m, future_intelligence.runtime, operator, "${FI_EXPERIMENT:-UNCONFIGURED}", --cycles, "10000", --interval, "10"]
+    environment:
+      FI_OPERATOR_DATABASE_URL_FILE: /run/secrets/operator_dsn
+    secrets: [operator_dsn]
+    depends_on:
+      setup: {condition: service_completed_successfully}
+    restart: "no"
+
+  worker-openai:
+    <<: *app
+    profiles: [live-openai]
+    networks: [database, outbound]
+    command: [python, -m, future_intelligence.runtime, worker, "${FI_EXPERIMENT:-UNCONFIGURED}", --cycles, "10000", --interval, "10", --allow-network]
+    environment:
+      FI_WORKER_DATABASE_URL_FILE: /run/secrets/worker_openai_dsn
+      OPENAI_API_KEY_FILE: /run/secrets/openai_key
+    secrets: [worker_openai_dsn, openai_key]
+    depends_on:
+      setup: {condition: service_completed_successfully}
+    restart: "no"
+
+  worker-anthropic:
+    <<: *app
+    profiles: [live-anthropic]
+    networks: [database, outbound]
+    command: [python, -m, future_intelligence.runtime, worker, "${FI_EXPERIMENT:-UNCONFIGURED}", --cycles, "10000", --interval, "10", --allow-network]
+    environment:
+      FI_WORKER_DATABASE_URL_FILE: /run/secrets/worker_anthropic_dsn
+      ANTHROPIC_API_KEY_FILE: /run/secrets/anthropic_key
+    secrets: [worker_anthropic_dsn, anthropic_key]
+    depends_on:
+      setup: {condition: service_completed_successfully}
+    restart: "no"
+
+  worker-google:
+    <<: *app
+    profiles: [live-google]
+    networks: [database, outbound]
+    command: [python, -m, future_intelligence.runtime, worker, "${FI_EXPERIMENT:-UNCONFIGURED}", --cycles, "10000", --interval, "10", --allow-network]
+    environment:
+      FI_WORKER_DATABASE_URL_FILE: /run/secrets/worker_google_dsn
+      GEMINI_API_KEY_FILE: /run/secrets/google_key
+    secrets: [worker_google_dsn, google_key]
+    depends_on:
+      setup: {condition: service_completed_successfully}
+    restart: "no"
+
+volumes:
+  database:
+networks:
+  database: {internal: true}
+  outbound: {}
+  webedge: {}
+secrets:
+  db_password: {file: ./.local-secrets/db_password}
+  migration_dsn: {file: ./.local-secrets/migration_dsn}
+  bootstrap: {file: ./.local-secrets/bootstrap.json}
+  dashboard_dsn: {file: ./.local-secrets/dashboard_dsn}
+  dashboard_token: {file: ./.local-secrets/dashboard_token}
+  operator_dsn: {file: ./.local-secrets/operator_dsn}
+  worker_openai_dsn: {file: ./.local-secrets/worker_openai_dsn}
+  worker_anthropic_dsn: {file: ./.local-secrets/worker_anthropic_dsn}
+  worker_google_dsn: {file: ./.local-secrets/worker_google_dsn}
+  openai_key: {file: ./.local-secrets/openai_key}
+  anthropic_key: {file: ./.local-secrets/anthropic_key}
+  google_key: {file: ./.local-secrets/google_key}

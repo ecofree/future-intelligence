@@ -1,48 +1,59 @@
 # Future Intelligence
 
-**专业未来研究与概率预测系统 · V2.0.1 工程初始化**
+**专业未来研究与概率预测系统 · 2.0.1.dev1 内部工程预览**
 
-仓库：`ecofree/future-intelligence`。开发分支：`codex/v2.0.1-bootstrap`。
-核心产品是专业研究系统，不是通用排行榜。代码公开不等于研究服务已经上线。
+仓库：`ecofree/future-intelligence`。本版本通过 PR #9 收束 #1/#2/#3/#4/#6/#8 的叠加工程成果；最终 main 合并 SHA 与主分支自身 CI 记录见 [PR #9](https://github.com/ecofree/future-intelligence/pull/9)。工程合并不等于生产服务上线，也不代表已发布 PyPI 包或 GitHub Release。
 
-## 当前状态
+核心产品是专业研究系统；多模型竞争和公开记分用于检验能力，不以排行榜代替研究产品本身。
 
-- 已冻结：V2.0.1 设计基线、ADR-01～10、实施依赖与验收门槛。
-- 已实现：二元 Brier / Log Loss、分箱 RPS、规范化内容承诺、随机 nonce、Merkle 证明、模型调用契约、离线演示及 30 项单元测试。
-- 尚未实现：PostgreSQL、API/工作台、三家真实模型适配器、任务调度、独立裁决、外部时间戳、统计实验引擎和生产安全。
-- **没有真实模型调用、外部时间戳、外部基准成绩或真实前瞻预测。**
-- 本次本地复测通过；远端 CI 状态以对应提交的 GitHub Actions 为准。
+## 当前能力与真实边界
 
-## 开发入口
+问题/许可冻结、全量实验与任务/预算账本、统一证据和三家 HTTP 适配器、完整批次承诺、RFC3161 校验、独立结果判定、历史评分、事件簇统计和内部工作台已经连接。数据库级正式/联调门控、来源快照与独立入场确认、官方发布事件分组、暂停/恢复及封存时间预留已经实现。
 
-1. [工程规格](docs/V2.0.1_SPEC.md)：冻结的设计基线与实现边界。
-2. [ADR](docs/adr/README.md)：10 项工程决策。
-3. [实施计划](docs/IMPLEMENTATION_PLAN.md)：按依赖排序的开发与验收任务。
-4. [承诺协议](docs/protocols/commitments.md)：编码和证明格式。
-5. [AGENTS.md](AGENTS.md)：Codex / 工程代理约束。
-6. [本次验证](reports/GITHUB_BOOTSTRAP.md)：复测和发布边界。
+代码 `aa25ddec` 的 **211 项完整离线测试、同一套 148 项 PostgreSQL 测试在 16/17 上通过**；实际重启/恢复、Docker 新部署、同集群新库备份还原及 Chromium 操作已在隔离 CI 复验。新增安装包检查在 Python3.11/3.13的新虚拟环境、源码目录外验证50个包文件（含13个SQL迁移）与已跟踪源码一致。
 
-## 克隆与运行
+**三家真实模型请求/费用、独立外部 TSA、真实未来事件结算、用户生产环境持续部署仍未验收。** 合成响应和测试 CA 不计入真实成绩。FORMAL 是运行政策，不是验收徽章；本地配置预检成功也不证明凭证有效。UI 仍是最小内部只读工作台，不是完整研究编辑器或公开竞争平台。
 
-需要 Python 3.11 或以上。核心测试和演示只用标准库，不需要模型 API 密钥。
+## 新部署：默认不调用模型
+
+Linux、Docker Engine/Compose v2、Python3；其他宿主须另外验证。以下从完成收束后的 main 新安装；已有配置/数据库的升级先阅读部署说明，不重置密码或删除卷。
 
 ```bash
-git clone --branch codex/v2.0.1-bootstrap https://github.com/ecofree/future-intelligence.git
+git clone --branch main https://github.com/ecofree/future-intelligence.git
 cd future-intelligence
-python -m unittest discover -s tests -v
-python -m future_intelligence
+export FI_UID="$(id -u)" FI_GID="$(id -g)"
+python3 deploy/configure.py
+docker compose -f deploy/compose.yaml up --build -d web
+curl --fail http://127.0.0.1:8080/readyz
 ```
 
-演示只验证本地计算和内容完整性。`external_timestamp_status=NOT_REQUESTED` 表示没有第三方时间证明。不得将模拟分数计入真实成绩。
+同一宿主浏览器打开 `http://127.0.0.1:8080/`。访问令牌位于本机私有文件 `deploy/.local-secrets/dashboard_token`，使用本机安全方式读取，不贴到聊天、日志或仓库。配置目录已存在则拒绝覆盖；正常停止不要删除数据库卷。默认没有模型密钥，不启动模型 worker，不生成假的预测成绩。
 
-## 下一批实施
+[完整运行与升级说明](docs/OPERATIONAL_READINESS.md) 仍适用；其中开发分支名仅用于追溯本批来源。TSA 申请与独立验证是单独步骤；日志告警不等于通知送达，同集群恢复不等于跨主机灾备。
 
-从 P0-01 开始：PostgreSQL 迁移、问题版本、冻结约束、UTC/原时区、事件簇和来源授权门控。随后实现实验任务账本和真实模型适配器。每批以对应验收为准，不以接口或类名存在视为完成。
+## 开发、安装检查与无联网预检
 
-## 发布与资料边界
+```bash
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install '.[postgres,web]'
+python -m unittest discover -s tests -v
+python -m future_intelligence
+python -m future_intelligence.runtime.preflight --role operator
+```
 
-仓库已由所有者手动创建，不要再运行用于创建新私有仓库的 `scripts/publish_github.sh`；该脚本作为初始化包历史工具保留，遇到已有同名仓库会拒绝操作。
+Python3.11+、OpenSSL3，数据库回归覆盖 PostgreSQL16/17。演示命令明确离线，不调用真实模型。最后一条命令在没有配置时应退出2；配置可读时退出0仍只代表 `PRESENT_NOT_VALIDATED`。数据库测试需要专用隔离库，禁止指向生产库。
 
-公开提交不包含用户原始 `evaluation.md`、`sources.md` 和 `sample_size_sim.py`；仅保留其 SHA-256 清单。原件仍在对话上传及本地初始化包中，见 [材料说明](docs/PROVENANCE.md)。后续代理无需等待原件即可按照工程规格开发；引用其具体外部陈述时应重新核查。
+下一实际运行步骤、缺少的环境输入、各角色预检和真实接口证据要求见 **[真实验收交接](docs/LIVE_ACCEPTANCE_HANDOFF.md)**。
 
-未选择开源许可证。不提交 `.env`、访问密钥、真实研究数据或未经许可的第三方原文。本地测试通过不代表完整 MVP 或生产验收通过。
+- [冻结规格](docs/V2.0.1_SPEC.md)、[实施门槛与剩余工作](docs/IMPLEMENTATION_PLAN.md)
+- [当前验收索引](reports/VALIDATION.md)、[本版基线实测报告](reports/PREVIEW_BASELINE_VALIDATION.md)
+- [原集成说明](docs/P0_04_07_RUNBOOK.md)、[ADR-019](docs/adr/019-preview-baseline-and-offline-preflight.md)、[ADR-018](docs/adr/018-operational-admission-and-local-deployment.md)、[历史 ADR](docs/adr/README.md)
+- [P0-01 数据库](docs/P0_01_DATABASE.md)、[P0-02 账本](docs/P0_02_TASK_LEDGER.md)、[P0-03 模型接口](docs/P0_03_PROVIDERS.md)、[工程代理规则](AGENTS.md)
+- [真实供应商验收 #5](https://github.com/ecofree/future-intelligence/issues/5)、[实际运行验收 #7](https://github.com/ecofree/future-intelligence/issues/7)
+
+## 安全与发布边界
+
+默认只向本机发布工作台，数据库不发布端口；远程 TLS、身份、限速和主机安全另行加固。应用不自动载入 .env，凭证通过环境或明确私有文件注入。内部导出含研究内容，不自动公开。签名绑定内容和时间，不自动证明资料真实、供应商身份或预测能力。
+
+安装包源文件一致性不等于完整依赖供应链审计，镜像/传递依赖摘要固定和 Actions 兼容告警仍待处理。不提交 .env、访问密钥、证书私钥、账单、真实研究数据、备份或未经许可的原文。原始评估附件仅保留指纹与材料说明，尚未选择开源许可证。仓库已存在，不要用历史 `scripts/publish_github.sh` 创建新仓库。
