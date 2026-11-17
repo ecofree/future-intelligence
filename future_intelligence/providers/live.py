@@ -178,6 +178,11 @@ def build_request(entry: dict, input_data: dict) -> str:
                 "contents": [{"role": "user", "parts": [{"text": text}]}],
                 "generationConfig": {"maxOutputTokens": p["max_output_tokens"], "candidateCount": 1,
                                      "responseMimeType": "application/json", "responseJsonSchema": schema}}
+    elif provider == COMPATIBLE and p["endpoint"]["protocol"] == "anthropic_messages":
+        # Same frozen shape as the official Anthropic adapter, on a registered relay.
+        body = {"model": entry["model_id"], "system": PROMPT,
+                "messages": [{"role": "user", "content": text}], "max_tokens": p["max_output_tokens"],
+                "stream": False, "output_config": {"format": {"type": "json_schema", "schema": schema}}}
     elif provider == COMPATIBLE:
         body = {"model": entry["model_id"],
                 "messages": [{"role": "system", "content": PROMPT}, {"role": "user", "content": text}],
@@ -215,7 +220,9 @@ class HTTPSOnce:
             path = {"openai": "/v1/responses", "anthropic": "/v1/messages",
                     "google": f"/v1beta/models/{model}:generateContent"}[provider]
         headers = {"Content-Type": "application/json", "Accept": "application/json", "Accept-Encoding": "identity"}
-        if provider in ("openai", COMPATIBLE):
+        if provider == COMPATIBLE and endpoint["protocol"] == "anthropic_messages":
+            headers.update({"x-api-key": key, "anthropic-version": "2023-06-01"})
+        elif provider in ("openai", COMPATIBLE):
             headers["Authorization"] = "Bearer " + key
         elif provider == "anthropic":
             headers.update({"x-api-key": key, "anthropic-version": "2023-06-01"})

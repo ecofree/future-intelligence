@@ -43,7 +43,7 @@
 | openai | POST api.openai.com/v1/responses | OPENAI_API_KEY | text.format / json_schema |
 | anthropic | POST api.anthropic.com/v1/messages | ANTHROPIC_API_KEY | output_config.format / json_schema |
 | google | POST generativelanguage.googleapis.com/v1beta/models/{model}:generateContent | GEMINI_API_KEY | generationConfig.responseJsonSchema |
-| openai_compatible | POST {endpoint.base_url}/chat/completions（冻结且本地注册的端点，见 ADR-020） | endpoint.api_key_env | response_format：json_schema 或 json_object |
+| openai_compatible | POST {endpoint.base_url}/chat/completions 或 /messages（按冻结的 endpoint.protocol；端点须本地注册，见 ADR-020） | endpoint.api_key_env（Bearer 或 x-api-key） | openai_chat：response_format json_schema/json_object；anthropic_messages：output_config json_schema |
 
 模型 ID 不提供默认值；使用账户实际授权、支持上述输出方式的具体型号。不能把官方文档示例型号当成本账户可用型号。
 

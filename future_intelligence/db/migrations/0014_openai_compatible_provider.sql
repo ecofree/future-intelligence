@@ -1,15 +1,19 @@
--- Forward only. Adds the config-driven `openai_compatible` LIVE provider
--- (Chat Completions on a frozen endpoint profile: DeepSeek, DashScope,
--- OpenRouter, relays). Existing provider semantics are unchanged; the three
+-- Forward only. Adds the config-driven `openai_compatible` LIVE provider on a
+-- frozen endpoint profile (DeepSeek, DashScope, OpenRouter, relays). The profile
+-- protocol is `openai_chat` (Chat Completions) or `anthropic_messages`
+-- (Anthropic Messages shape on a relay). Existing provider semantics are unchanged; the three
 -- functions below are verbatim copies of 0003/0005/0006 plus one branch each.
 -- See ADR-020.
 
 CREATE FUNCTION fi.valid_compatible_endpoint(p jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,fi,pg_temp AS $$
   SELECT coalesce(jsonb_typeof(p)='object'
-    AND p ?& ARRAY['name','base_url','api_key_env','response_format']
-    AND (SELECT count(*) FROM jsonb_object_keys(p))=4
+    AND p ?& ARRAY['name','base_url','protocol','api_key_env','response_format']
+    AND (SELECT count(*) FROM jsonb_object_keys(p))=5
     AND jsonb_typeof(p->'name')='string' AND jsonb_typeof(p->'base_url')='string'
+    AND jsonb_typeof(p->'protocol')='string'
+    AND (p->>'protocol') IN ('openai_chat','anthropic_messages')
+    AND ((p->>'protocol')='openai_chat' OR (p->>'response_format')='json_schema')
     AND jsonb_typeof(p->'api_key_env')='string' AND jsonb_typeof(p->'response_format')='string'
     AND (p->>'name') ~ '^[a-z0-9][a-z0-9_-]{0,39}$'
     AND length(p->>'base_url')<=300 AND strpos(p->>'base_url','..')=0
@@ -159,7 +163,13 @@ BEGIN
       OR b->'contents' IS DISTINCT FROM jsonb_build_array(jsonb_build_object('role','user','parts',jsonb_build_array(jsonb_build_object('text',input_text))))
       OR b#>'{generationConfig,candidateCount}' IS DISTINCT FROM '1'::jsonb THEN
       RAISE EXCEPTION 'unsafe Google request' USING ERRCODE='22023'; END IF;
-  ELSIF provider_name='openai_compatible' THEN
+  ELSIF provider_name='openai_compatible' AND cfg#>>'{parameters,endpoint,protocol}'='anthropic_messages' THEN
+    allowed:=ARRAY['model','system','messages','max_tokens','stream','output_config'];
+    prompt:=b->>'system'; input_text:=b#>>'{messages,0,content}'; max_output:=(b->>'max_tokens')::integer;
+    IF b->>'model' IS DISTINCT FROM cfg->>'model_id' OR b->'stream' IS DISTINCT FROM 'false'::jsonb
+      OR b->'messages' IS DISTINCT FROM jsonb_build_array(jsonb_build_object('role','user','content',input_text)) THEN
+      RAISE EXCEPTION 'unsafe Anthropic-compatible request' USING ERRCODE='22023'; END IF;
+  ELSIF provider_name='openai_compatible' AND cfg#>>'{parameters,endpoint,protocol}'='openai_chat' THEN
     allowed:=ARRAY['model','messages','max_tokens','stream','response_format'];
     prompt:=b#>>'{messages,0,content}'; input_text:=b#>>'{messages,1,content}'; max_output:=(b->>'max_tokens')::integer;
     IF b->>'model' IS DISTINCT FROM cfg->>'model_id' OR b->'stream' IS DISTINCT FROM 'false'::jsonb
@@ -182,7 +192,7 @@ END $$;
 
 CREATE OR REPLACE FUNCTION fi.provider_request_guard() RETURNS trigger LANGUAGE plpgsql
 SET search_path=pg_catalog,fi,pg_temp AS $$
-DECLARE b jsonb; data text; wanted jsonb; fmt text;
+DECLARE b jsonb; data text; wanted jsonb; fmt text; proto text;
   schema_def jsonb := '{"type":"object","additionalProperties":false,"properties":{"probabilities_ppm":{"type":"array","items":{"type":"integer"}},"rationale":{"type":"string"},"evidence_ids":{"type":"array","items":{"type":"string"}}},"required":["probabilities_ppm","rationale","evidence_ids"]}';
 BEGIN
   IF NOT (NEW.request_text IS JSON OBJECT WITH UNIQUE KEYS) THEN
@@ -205,16 +215,24 @@ BEGIN
     IF b->'generationConfig' IS DISTINCT FROM wanted THEN
       RAISE EXCEPTION 'unregistered output contract' USING ERRCODE='22023'; END IF;
   ELSIF NEW.provider='openai_compatible' THEN
-    data:=b#>>'{messages,1,content}';
-    SELECT ee.config#>>'{parameters,endpoint,response_format}' INTO fmt
+    SELECT ee.config#>>'{parameters,endpoint,response_format}',ee.config#>>'{parameters,endpoint,protocol}' INTO fmt,proto
       FROM fi.expected_tasks q JOIN fi.experiment_entries ee ON ee.experiment_id=q.experiment_id AND ee.entry_key=q.entry_key
       WHERE q.id=NEW.task_id;
+    IF proto='anthropic_messages' THEN
+      data:=b#>>'{messages,0,content}';
+      IF b->'output_config' IS DISTINCT FROM jsonb_build_object('format',jsonb_build_object('type','json_schema','schema',schema_def)) THEN
+        RAISE EXCEPTION 'unregistered output contract' USING ERRCODE='22023'; END IF;
+    ELSIF proto IS DISTINCT FROM 'openai_chat' THEN
+      RAISE EXCEPTION 'unregistered compatible protocol' USING ERRCODE='22023';
+    ELSE
+    data:=b#>>'{messages,1,content}';
     wanted:=CASE fmt
       WHEN 'json_schema' THEN jsonb_build_object('type','json_schema','json_schema',
         jsonb_build_object('name','forecast','strict',true,'schema',schema_def))
       WHEN 'json_object' THEN jsonb_build_object('type','json_object') END;
     IF wanted IS NULL OR b->'response_format' IS DISTINCT FROM wanted THEN
       RAISE EXCEPTION 'unregistered output contract' USING ERRCODE='22023'; END IF;
+    END IF;
   ELSE RAISE EXCEPTION 'unsupported provider' USING ERRCODE='22023'; END IF;
   IF data IS NULL OR NOT (data IS JSON OBJECT WITH UNIQUE KEYS) THEN
     RAISE EXCEPTION 'model input JSON keys must be unique' USING ERRCODE='22023'; END IF;

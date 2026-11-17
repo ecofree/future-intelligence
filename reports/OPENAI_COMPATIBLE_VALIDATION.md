@@ -27,11 +27,40 @@ Debian 13 本机，Python 3.13.5，PostgreSQL 17.11（本地临时集群，独�
 - 本机出口 DNS 将公网域名解析到 198.18.0.0/15，项目 `PublicHTTPS` 的 SSRF 防护会拒绝，因此 `collect-bls` 与 `anchor`（TSA）在此机器不能直接联网；模型调用使用 `HTTPSConnection`，不受影响。
 - **RFC3161（库级，不入账本）**：用 curl 从 FreeTSA 取得真实时间戳，再由项目 `verify_reply` 校验，状态 VERIFIED，`revocation_status=NOT_CHECKED`。FreeTSA 不声明 accuracy，需信任档案显式设置 `missing_accuracy_us` 才能通过；CA 文件取自 TSA 自身站点，不是独立核实的信任根。DIAGNOSTIC 实验按设计不能进入正式批次，因此未执行数据库内 REGISTRATION/FORECAST 时间证明。
 
+## 4. Claude 经中转 subrouter.ai（DIAGNOSTIC，2026-11-17）
+
+端点档案在仓库外文件中注册（`FI_COMPATIBLE_PROVIDERS_FILE`）：`subrouter-claude`（`https://subrouter.ai/v1`，`anthropic_messages`，json_schema）与 `subrouter-chat`（同主机，`openai_chat`，json_schema）。同一组 BLS CPI 冻结问题、同一驱动；每次尝试上限 150000 µUSD（opus 规划上界约 0.106 美元），`max_attempts=1`，超时 120 秒（项目合同上限）。报价取自 https://subrouter.ai/api/pricing 列出的官方参考价（sonnet $2/$10、opus $4/$20 每百万 tokens）；中转实际倍率与账单未知，下表金额只是报价估算。
+
+| 运行 | 模型 / 协议 | 题型 | 结果 | 输入/输出 tokens（含缓存） | 延迟 |
+|---|---|---|---|---|---|
+| sonnet-1 | claude-sonnet-5-5 / messages | 二元 | OK，[No, Yes]=[550000, 450000] | 64482 / 1701 | 7.8 s |
+| sonnet-1 | claude-sonnet-5-5 / messages | 分箱 | TIMEOUT（120 s） | — | 120.2 s |
+| sonnet-2 | claude-sonnet-5-5 / messages | 二元 | OK，[650000, 350000] | 3162 / 1002 | 18.6 s |
+| sonnet-3 | claude-sonnet-5-5 / messages | 二元 | OK，[625000, 375000] | 3162 / 1059 | 9.2 s |
+| sonnet-4 | claude-sonnet-5-5 / messages | 二元 | OK，[730000, 270000] | 3162 / 1149 | — |
+| sonnet-4 | claude-sonnet-5-5 / messages | 分箱 | OK，5 个概率 [15000, 50000, 230000, 560000, 145000] | 3195 / 810 | — |
+| opus-1 | claude-opus-5-5 / messages | 二元 | OK，[560000, 440000] | 3162 / 1200 | — |
+| opus-1 | claude-opus-5-5 / messages | 分箱 | OK，5 个概率 [50000, 100000, 200000, 400000, 250000] | 3195 / 960 | — |
+| opus-2 | claude-opus-5-5 / messages | 二元 | OK，[720000, 280000] | 7887 / 1452 | 48.5 s |
+| opus-3 | claude-opus-5-5 / messages | 二元 | OK，[720000, 280000] | 8493 / 1500 | 33.1 s |
+| sonnet-chat | claude-sonnet-5-5 / chat | 二元 | INVALID_OUTPUT | 7236 / 2103 | 48.1 s |
+
+sonnet-4 与 opus-1 两题合计延迟分别为 41.2+9.7 s 与 42.8+11.4 s（驱动按尝试计时，未与题型一一对应）。11 次账本内调用报价估算合计约 0.44 美元；另有 7 次账本外探针调用（模型列表、协议与参数探测、token 计数），估算约 0.27 美元。
+
+发现：
+
+- 返回的 `model` 字段始终等于请求值，但响应 ID 有 `msg_01…`（Anthropic 原生格式）与 `msg_<32 位十六进制>` 两种，usage 字段结构也不同，说明请求被路由到不同上游；`/api/pricing` 为 sonnet 列出 28 个、为 opus 列出 35 个上游分组。返回模型名不能证明实际执行的模型。
+- **计费 token 远大于实际提示**：同一短提示 `count_tokens` 为 191，而实际调用 usage 报告 6933 输入 + 49692 缓存写入；sonnet-1 二元题报告 64482 输入 tokens（OpenAI 同题约 950）。不带 system 时模型自称 “Claude Code”。中转很可能注入隐藏的系统提示/工具定义，实验无法保证模型只看到冻结提示词。输出 tokens（约 800–2100）也远多于可见 JSON（约 150–250 tokens）。
+- Chat Completions 接口静默忽略 `response_format` 和未知参数（如 `fi_bogus_param`），输出被 Markdown 代码块包裹，被严格解析拒绝；Messages 接口执行 `output_config` json_schema。据此新增 `protocol` 字段（ADR-020）。
+- Claude 两个模型在分箱题上都返回 5 个概率，gpt-4o-mini 3/3 返回 4 个：类别数缺失的合同缺陷表现为“依赖模型猜测”，不是稳定失败，仍需修合同。
+- 二元题方差：sonnet P(No) 0.55/0.65/0.625/0.73，opus 0.56/0.72/0.72，gpt-4o-mini 0.40/0.62。单次调用不构成稳定预测。
+- 可用性：1 次 120 s 超时、单次延迟 8–48 s；项目把超时上限硬编码为 120 s，慢中转上的长输出题可能系统性超时。
+
 ## 3. 回归测试
 
 | 范围 | 结果 |
 |---|---|
-| 离线 `python -m unittest discover -s tests` | 236 项通过（原 211 + 新增 25） |
-| PostgreSQL 17 `python -m unittest discover -s tests/integration` | 153 项通过（原 148 + 新增 5） |
+| 离线 `python -m unittest discover -s tests` | 239 项通过（原 211 + 新增 28） |
+| PostgreSQL 17 `python -m unittest discover -s tests/integration` | 154 项通过（原 148 + 新增 6） |
 
-未在 PostgreSQL 16、Docker Compose 部署、Chromium 冒烟或 GitHub Actions 上复测；DeepSeek、DashScope、OpenRouter、xAI 预设未做真实调用。
+未在 PostgreSQL 16、Docker Compose 部署、Chromium 冒烟或 GitHub Actions 上复测；DeepSeek、DashScope、OpenRouter、xAI 预设未做真实调用；仅 subrouter.ai 一个中转做过真实调用。

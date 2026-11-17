@@ -35,7 +35,8 @@ class CompatibleLiveTests(live.LiveEvidenceTests):
     def test_registration_rejects_invalid_profiles(self):
         vid,_=self.question()
         spec=previous.experiment_spec(run_kind='LIVE',budget_microusd=100000000,attempt_cap_microusd=1000000,lease_seconds=120)
-        bad=[compat.profile(base_url='http://plain.example.com'),compat.profile(api_key_env='FI_WORKER_DATABASE_URL'),
+        bad=[compat.profile(base_url='http://plain.example.com'),compat.profile(protocol='grpc'),
+             compat.relay(response_format='json_object'),compat.profile(api_key_env='FI_WORKER_DATABASE_URL'),
              compat.profile(response_format='text'),{**compat.profile(),'api_key':'x'},None]
         for endpoint in bad:
             cfg=compat.entry(); cfg['parameters']['endpoint']=endpoint
@@ -64,6 +65,19 @@ class CompatibleLiveTests(live.LiveEvidenceTests):
             with self.assertRaises(psycopg.errors.InvalidParameterValue): self.er['worker'].prepare(lease,json.dumps(bad))
             self.assertTrue(self.er['worker'].prepare(lease,json.dumps(good)))
 
+    def test_anthropic_messages_relay_shape_enforced(self):
+        e=self.make_compatible(compat.relay(),'claude-sonnet-5-5'); lease=self.claim(e); ctx=self.er['worker'].context(lease)
+        good=strict_json(build_request(lease['entry'],ctx))
+        for key,value in [('system','rewritten'),('model','other'),('stream',True),('max_tokens',999),
+                          ('output_config',{'format':{'type':'json_object'}}),('response_format',{'type':'json_object'})]:
+            bad=copy.deepcopy(good); bad[key]=value
+            with self.subTest(key=key), self.assertRaises(psycopg.errors.InvalidParameterValue):
+                self.er['worker'].prepare(lease,json.dumps(bad))
+        # A Chat Completions body is not accepted for an anthropic_messages profile.
+        chat=strict_json(build_request(compat.entry(),ctx))
+        with self.assertRaises(psycopg.errors.InvalidParameterValue): self.er['worker'].prepare(lease,json.dumps(chat))
+        self.assertTrue(self.er['worker'].prepare(lease,json.dumps(good)))
+
     def test_compatible_runner_end_to_end(self):
         e=self.make_compatible(); transport=compat.FakeWire(compat.response())
         result=run_once(self.er['worker'],e,transport,{'DEEPSEEK_API_KEY':'synthetic-test-key-not-real'})
@@ -73,7 +87,7 @@ class CompatibleLiveTests(live.LiveEvidenceTests):
         self.assertEqual(row,'openai_compatible')
 
     def test_unregistered_endpoint_blocked_no_dispatch(self):
-        relay={'name':'relay','base_url':'https://relay.example.com/v1','api_key_env':'RELAY_API_KEY','response_format':'json_object'}
+        relay={'name':'relay','base_url':'https://relay.example.com/v1','protocol':'openai_chat','api_key_env':'RELAY_API_KEY','response_format':'json_object'}
         e=self.make_compatible(relay,'gpt-4o-mini'); transport=compat.FakeWire(compat.response())
         out=run_once(self.er['worker'],e,transport,{'RELAY_API_KEY':'synthetic'})
         self.assertEqual(out['reason'],'ENDPOINT_NOT_REGISTERED'); self.assertEqual(transport.calls,[])

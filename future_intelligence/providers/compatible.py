@@ -1,8 +1,11 @@
-"""OpenAI-compatible Chat Completions endpoints (DeepSeek, DashScope, OpenRouter, relays).
+"""Compatible endpoints (DeepSeek, DashScope, OpenRouter, relays such as subrouter).
 
 An endpoint profile is non-secret configuration: a name, an HTTPS base URL, the
-NAME of the environment variable holding its key, and the structured-output mode
-the endpoint supports. The full profile is frozen inside each experiment entry
+wire protocol (``openai_chat`` = Chat Completions, ``anthropic_messages`` =
+Anthropic Messages on a relay), the NAME of the environment variable holding its
+key, and the structured-output mode the endpoint supports. Relays may silently
+ignore Chat Completions ``response_format`` while honoring Anthropic
+``output_config``; the protocol is therefore explicit and frozen. The full profile is frozen inside each experiment entry
 (``parameters.endpoint``), so the registration manifest records exactly where a
 model was called. At dispatch time the worker additionally requires the frozen
 profile to equal a profile in its own local registry; a database row alone can
@@ -21,7 +24,8 @@ from typing import Mapping
 from urllib.parse import urlsplit
 
 PROVIDER = "openai_compatible"
-PROFILE_KEYS = frozenset({"name", "base_url", "api_key_env", "response_format"})
+PROFILE_KEYS = frozenset({"name", "base_url", "protocol", "api_key_env", "response_format"})
+PROTOCOLS = ("openai_chat", "anthropic_messages")
 RESPONSE_FORMATS = ("json_schema", "json_object")
 NAME_RE = r"[a-z0-9][a-z0-9_-]{0,39}"
 ENV_RE = r"[A-Z][A-Z0-9_]{2,63}"
@@ -34,15 +38,15 @@ MAX_REGISTRY_BYTES = 65536
 # DashScope compatible mode document JSON-object mode; schema validation is
 # always repeated locally and in PostgreSQL regardless of the mode.
 PRESETS = {
-    "deepseek": {"name": "deepseek", "base_url": "https://api.deepseek.com",
+    "deepseek": {"name": "deepseek", "base_url": "https://api.deepseek.com", "protocol": "openai_chat",
                  "api_key_env": "DEEPSEEK_API_KEY", "response_format": "json_object"},
     "dashscope": {"name": "dashscope", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                  "api_key_env": "DASHSCOPE_API_KEY", "response_format": "json_object"},
+                  "protocol": "openai_chat", "api_key_env": "DASHSCOPE_API_KEY", "response_format": "json_object"},
     "dashscope-intl": {"name": "dashscope-intl", "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-                       "api_key_env": "DASHSCOPE_API_KEY", "response_format": "json_object"},
-    "openrouter": {"name": "openrouter", "base_url": "https://openrouter.ai/api/v1",
+                       "protocol": "openai_chat", "api_key_env": "DASHSCOPE_API_KEY", "response_format": "json_object"},
+    "openrouter": {"name": "openrouter", "base_url": "https://openrouter.ai/api/v1", "protocol": "openai_chat",
                    "api_key_env": "OPENROUTER_API_KEY", "response_format": "json_schema"},
-    "xai": {"name": "xai", "base_url": "https://api.x.ai/v1",
+    "xai": {"name": "xai", "base_url": "https://api.x.ai/v1", "protocol": "openai_chat",
             "api_key_env": "XAI_API_KEY", "response_format": "json_schema"},
 }
 # Database and token variables must never be sent to a model endpoint.
@@ -56,10 +60,15 @@ class EndpointError(ValueError):
 def validate_profile(value) -> dict:
     """Return an isolated, normalized profile or raise EndpointError."""
     if not isinstance(value, dict) or set(value) != PROFILE_KEYS:
-        raise EndpointError("endpoint profile must contain exactly name/base_url/api_key_env/response_format")
+        raise EndpointError("endpoint profile must contain exactly name/base_url/protocol/api_key_env/response_format")
     if not all(isinstance(value[k], str) for k in PROFILE_KEYS):
         raise EndpointError("endpoint profile fields must be strings")
     name, url, env, fmt = value["name"], value["base_url"], value["api_key_env"], value["response_format"]
+    protocol = value["protocol"]
+    if protocol not in PROTOCOLS:
+        raise EndpointError("unsupported protocol")
+    if protocol == "anthropic_messages" and fmt != "json_schema":
+        raise EndpointError("anthropic_messages requires json_schema output_config")
     if not re.fullmatch(NAME_RE, name):
         raise EndpointError("invalid endpoint name")
     if len(url) > 300 or not re.fullmatch(BASE_URL_RE, url) or ".." in url:
@@ -71,7 +80,7 @@ def validate_profile(value) -> dict:
         raise EndpointError("api_key_env must be an uppercase variable name outside FI_*")
     if fmt not in RESPONSE_FORMATS:
         raise EndpointError("unsupported response_format")
-    return {"name": name, "base_url": url, "api_key_env": env, "response_format": fmt}
+    return {"name": name, "base_url": url, "protocol": protocol, "api_key_env": env, "response_format": fmt}
 
 
 def load_registry(environ: Mapping[str, str] | None = None) -> dict[str, dict]:
@@ -122,5 +131,14 @@ def endpoint(name: str, environ: Mapping[str, str] | None = None) -> dict:
 
 def target(profile: dict) -> tuple[str, str]:
     """(host, request path) for a validated profile."""
-    parts = urlsplit(validate_profile(profile)["base_url"])
-    return parts.hostname, (parts.path.rstrip("/") + "/chat/completions")
+    p = validate_profile(profile)
+    parts = urlsplit(p["base_url"])
+    suffix = "/messages" if p["protocol"] == "anthropic_messages" else "/chat/completions"
+    return parts.hostname, (parts.path.rstrip("/") + suffix)
+
+
+def wire_kind(entry: dict) -> str:
+    """Parser family for an entry: official provider name, or the compatible protocol."""
+    if entry.get("provider") != PROVIDER:
+        return entry.get("provider")
+    return "anthropic" if entry["parameters"]["endpoint"]["protocol"] == "anthropic_messages" else PROVIDER

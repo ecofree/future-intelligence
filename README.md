@@ -59,11 +59,11 @@ Python3.11+、OpenSSL3，数据库回归覆盖 PostgreSQL16/17。演示命令明
 1. 选择端点档案。内置预设：`deepseek`、`dashscope`（通义千问国内）、`dashscope-intl`、`openrouter`、`xai`。中转网关或自建端点写入仓库外的 JSON 文件，并用 `FI_COMPATIBLE_PROVIDERS_FILE` 指向它（同名会覆盖预设）：
 
    ```json
-   [{"name": "my-relay", "base_url": "https://relay.example.com/v1",
+   [{"name": "my-relay", "base_url": "https://relay.example.com/v1", "protocol": "openai_chat",
      "api_key_env": "MY_RELAY_API_KEY", "response_format": "json_object"}]
    ```
 
-   `base_url` 只能是 `https://域名[/路径]`；`api_key_env` 是**变量名**，不是密钥，且不能以 `FI_` 开头；端点支持结构化输出时用 `json_schema`，否则用 `json_object`。
+   `base_url` 只能是 `https://域名[/路径]`；`api_key_env` 是**变量名**，不是密钥，且不能以 `FI_` 开头；`protocol` 为 `openai_chat`（`/chat/completions`）或 `anthropic_messages`（`/messages`，Bearer 换成 `x-api-key`，必须配 `json_schema`，用于只在 Messages 接口执行结构化输出的 Claude 中转）；端点支持结构化输出时用 `json_schema`，否则用 `json_object`。中转网关可能忽略 `response_format`，接入前务必先跑 DIAGNOSTIC 烟测。
 2. 在参赛配置中冻结完整档案（模型 ID 可含一个 `/`，如 OpenRouter 的 `deepseek/deepseek-chat`）：
 
    ```python

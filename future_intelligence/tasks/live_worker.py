@@ -10,6 +10,7 @@ import json
 import os
 import sys
 
+from future_intelligence.providers.compatible import wire_kind
 from future_intelligence.providers.live import (
     COMPATIBLE, Blocked, HTTPSOnce, KEYS, WireResponse, build_request, credentials,
     credentials_for, estimated_cost, parse_response, validate_entry,
@@ -55,7 +56,7 @@ def run_once(repo, experiment: str, transport=None, environ=None) -> dict:
     spec = context['question_spec']
     categories = 2 if spec['question_type'] == 'binary' else len(spec['bin_edges'])+1
     ids = {x['id'] for x in context['evidence']['items']}
-    obs = parse_response(entry['provider'], wire, categories, ids)
+    obs = parse_response(wire_kind(entry), wire, categories, ids)
     repo.observe(lease, obs)  # Persist late usage evidence even if lease has expired.
     if obs['status'] == 'OK':
         receipt = repo.succeed(lease, obs['output']['probabilities_ppm'], obs['response_sha256'], None)

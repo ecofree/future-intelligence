@@ -66,13 +66,17 @@ class ProfileTests(unittest.TestCase):
         with self.assertRaises(EndpointError): validate_profile(profile(response_format='text'))
         with self.assertRaises(EndpointError): validate_profile({**profile(),'api_key':'secret'})
         with self.assertRaises(EndpointError): validate_profile(profile(name='Bad Name'))
+        with self.assertRaises(EndpointError): validate_profile(profile(protocol='grpc'))
+        with self.assertRaises(EndpointError): validate_profile(profile(protocol='anthropic_messages',response_format='json_object'))
+        p=dict(profile()); del p['protocol']
+        with self.assertRaises(EndpointError): validate_profile(p)
 
     def registry_file(self, items):
         f=tempfile.NamedTemporaryFile('w',suffix='.json',delete=False); json.dump(items,f); f.close()
         self.addCleanup(os.unlink,f.name); return {'FI_COMPATIBLE_PROVIDERS_FILE':f.name}
 
     def test_registry_file_adds_and_overrides(self):
-        relay={'name':'relay','base_url':'https://relay.example.com/v1','api_key_env':'RELAY_API_KEY','response_format':'json_schema'}
+        relay={'name':'relay','base_url':'https://relay.example.com/v1','protocol':'openai_chat','api_key_env':'RELAY_API_KEY','response_format':'json_schema'}
         env=self.registry_file([relay,profile(response_format='json_schema')])
         reg=load_registry(env)
         self.assertEqual(reg['relay'],relay); self.assertEqual(reg['deepseek']['response_format'],'json_schema')
@@ -94,6 +98,52 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(compatible.target(compatible.PRESETS['deepseek']),('api.deepseek.com','/chat/completions'))
         self.assertEqual(compatible.target(compatible.PRESETS['dashscope']),
                          ('dashscope.aliyuncs.com','/compatible-mode/v1/chat/completions'))
+
+
+def relay(**changes):
+    return {'name':'subrouter-claude','base_url':'https://relay.example.com/v1','protocol':'anthropic_messages',
+            'api_key_env':'RELAY_API_KEY','response_format':'json_schema',**changes}
+
+
+def anthropic_response(value=None, stop='end_turn'):
+    data={'id':'msg_fixture','model':'claude-fixture','stop_reason':stop,
+          'usage':{'input_tokens':100,'output_tokens':20,'cache_creation_input_tokens':0,'cache_read_input_tokens':0,'iterations':[{}]},
+          'content':[{'type':'thinking','thinking':'private'},{'type':'text','text':json.dumps(output() if value is None else value)}]}
+    return WireResponse(200,encode(data))
+
+
+class AnthropicMessagesRelayTests(unittest.TestCase):
+    def test_target_and_request_shape(self):
+        self.assertEqual(compatible.target(relay()),('relay.example.com','/v1/messages'))
+        e=entry(endpoint=relay(),model='claude-sonnet-5-5')
+        body=strict_json(build_request(e,input_data()))
+        self.assertEqual(body,{'model':'claude-sonnet-5-5','system':PROMPT,
+            'messages':[{'role':'user','content':encode(input_data()).decode()}],'max_tokens':512,'stream':False,
+            'output_config':{'format':{'type':'json_schema','schema':body['output_config']['format']['schema']}}})
+        self.assertEqual(body['output_config']['format']['schema']['required'],['probabilities_ppm','rationale','evidence_ids'])
+
+    def test_headers_use_anthropic_auth(self):
+        class Resp:
+            status=200
+            def read1(self,n): return b''
+            def getheader(self,n): return None
+        with patch('http.client.HTTPSConnection') as conn:
+            conn.return_value.getresponse.return_value=Resp()
+            HTTPSOnce().send('openai_compatible','claude-sonnet-5-5','{}','fixture-key',5,endpoint=relay())
+            headers=conn.return_value.request.call_args.kwargs['headers']
+            self.assertEqual(headers['x-api-key'],'fixture-key'); self.assertNotIn('Authorization',headers)
+            self.assertEqual(conn.return_value.request.call_args.args[1],'/v1/messages')
+
+    def test_runner_parses_with_anthropic_rules(self):
+        env={'FI_COMPATIBLE_PROVIDERS_FILE':None}
+        f=tempfile.NamedTemporaryFile('w',suffix='.json',delete=False); json.dump([relay()],f); f.close(); self.addCleanup(os.unlink,f.name)
+        env={'FI_COMPATIBLE_PROVIDERS_FILE':f.name,'RELAY_API_KEY':'synthetic'}
+        r=FakeRepo(entry(endpoint=relay(),model='claude-sonnet-5-5')); w=FakeWire(anthropic_response())
+        out=run_once(r,'exp',w,env)
+        self.assertEqual(out['status'],'OK'); self.assertEqual(r.obs['request_id'],'msg_fixture')
+        self.assertNotIn('private',json.dumps(r.obs))
+        r=FakeRepo(entry(endpoint=relay(),model='claude-sonnet-5-5')); w=FakeWire(anthropic_response(stop='max_tokens'))
+        self.assertEqual(run_once(r,'exp',w,env)['status'],'INCOMPLETE')
 
 
 class EntryTests(unittest.TestCase):
