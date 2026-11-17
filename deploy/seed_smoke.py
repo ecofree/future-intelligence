@@ -32,10 +32,13 @@ author=QuestionRepository(dsn('author'));reviewer=QuestionRepository(dsn('admiss
 v=author.create_version('deployment-'+uuid4().hex,spec,[str(pid)])
 reviewer.review(v,'Independent synthetic test question review');author.freeze(v)
 operator=TaskRepository(dsn('operator'))
-exp=operator.register('deploy-exp-'+uuid4().hex,[v],[dict(entry_key='model-0',provider='fixture',model_id='synthetic',prompt_sha256='a'*64,parameters={})],
-    dict(protocol='fi.experiment.v1',suite='A',run_kind='FIXTURE',forecast_deadline=spec['forecast_deadline'],
-         budget_microusd=1000,attempt_cap_microusd=100,max_attempts=2,lease_seconds=60,
-         failure_policy='REPORT_MISSING',baseline_policy='UNIFORM_CATEGORIES_V1',disclosure_policy='COMPLETE_BATCH_AFTER_RESOLUTION'))
+entries=[dict(entry_key='model-0',provider='fixture',model_id='synthetic',prompt_sha256='a'*64,parameters={})]
+exp_spec=dict(protocol='fi.experiment.v1',suite='A',run_kind='FIXTURE',forecast_deadline=spec['forecast_deadline'],
+    budget_microusd=1000,attempt_cap_microusd=100,max_attempts=2,lease_seconds=60,
+    failure_policy='REPORT_MISSING',baseline_policy='UNIFORM_CATEGORIES_V1',disclosure_policy='COMPLETE_BATCH_AFTER_RESOLUTION')
+exp=operator.register('deploy-exp-'+uuid4().hex,[v],entries,exp_spec)
 operator.bind_worker(exp,'model-0',accounts['worker_openai']['login'])
 assert run_once(TaskRepository(dsn('worker_openai')),exp)['run_kind']=='FIXTURE'
-print('PASS: one synthetic experiment persisted with one fixture submission; no external requests.')
+# Exceed the old hard cap so the real browser must navigate multiple real pages.
+for _ in range(204):operator.register('deploy-page-'+uuid4().hex,[v],entries,exp_spec)
+print('PASS: 205 synthetic experiments persisted with one fixture submission; no external requests.')
