@@ -1,0 +1,26 @@
+{
+  "warning": "OFFLINE DEMO ONLY: no model call, actual event or external timestamp",
+  "commitment": {
+    "schema": "FI:commitment:v1",
+    "nonce": "6145c3e7ad26653bdb688aa5e56531003cc25379ecd190c75c5cdac420d4e77c",
+    "payload": {
+      "external_timestamp_status": "NOT_REQUESTED",
+      "model_config_id": "fixture-no-provider-call",
+      "probability_ppm": 700000,
+      "question_version_id": "demo-question-v1",
+      "run_kind": "MOCK_OFFLINE_DEMO"
+    }
+  },
+  "record_hash": "a5f6a64c0e1bc5bede7e7918c65caa5df97ba8967d944699db40417d84761322",
+  "merkle_root": "1aa63ada6a15689fd480e478a7cdf352ac61c5878388398aa56a08715ded24a9",
+  "proof": {
+    "leaf_index": 0,
+    "leaf_count": 1,
+    "steps": []
+  },
+  "content_integrity_valid": true,
+  "external_timestamp_status": "NOT_REQUESTED",
+  "simulated_outcome": 1,
+  "brier": 0.09000000000000002,
+  "log_loss": 0.35667494393873245
+}
