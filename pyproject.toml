@@ -4,10 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "future-intelligence"
-version = "2.0.1.dev0"
-description = "Auditable probabilistic forecasting research system - initialization slice"
+version = "2.0.1.dev1"
+description = "Auditable forecasting research system - integrated engineering preview"
 requires-python = ">=3.11"
 dependencies = []
 
 [tool.setuptools.packages.find]
 include = ["future_intelligence*"]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]==3.3.9"]
+web = ["fastapi==0.128.2", "uvicorn==0.48.0", "httpx==0.28.1"]
+
+[tool.setuptools.package-data]
+"future_intelligence.db" = ["migrations/*.sql"]
