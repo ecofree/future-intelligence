@@ -46,7 +46,7 @@ class IntegratedMigrationPathsTests(unittest.TestCase):
         migration=importlib.import_module('future_intelligence.db.migrate')
         all_files={p.name:p.read_bytes() for p in files('future_intelligence.db').joinpath('migrations').iterdir()
                    if p.name.endswith('.sql')}
-        self.assertEqual(len(all_files),19)
+        self.assertEqual(len(all_files),20)
         with self.database() as reference,self.database() as upgraded,tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(migration.migrate(reference),sorted(all_files))
             selected=[n for n in all_files if n[:4]<'0014']
@@ -55,16 +55,20 @@ class IntegratedMigrationPathsTests(unittest.TestCase):
             elif kind=='integrated16':selected=[n for n in all_files if n[:4]<'0016']
             elif kind=='canonical17':selected=[n for n in all_files if n[:4]<'0017']
             elif kind=='exact18':selected=[n for n in all_files if n[:4]<'0018']
+            elif kind=='canonical19':selected=[n for n in all_files if n[:4]<'0019']
             root=Path(tmp);target=root/'migrations';target.mkdir()
             for name in selected:(target/name).write_bytes(all_files[name])
             with patch.object(migration,'files',return_value=root):
                 self.assertEqual(migration.migrate(upgraded),sorted(selected))
+            from future_intelligence.evidence.repository import EvidenceRepository
+            self.assertFalse(EvidenceRepository(upgraded).supports_observation_v2())
             with psycopg.connect(upgraded) as c:
                 sid=c.execute('SELECT fi.register_source(%s,%s)',
                     ('SYNTHETIC PATH SENTINEL','https://example.invalid/sentinel')).fetchone()[0]
                 row=c.execute('SELECT to_jsonb(s) FROM fi.sources s WHERE id=%s',(sid,)).fetchone()[0]
                 history=c.execute('SELECT version,sha256,applied_at FROM fi_meta.schema_migrations ORDER BY version').fetchall()
             self.assertEqual(migration.migrate(upgraded),sorted(set(all_files)-set(selected)))
+            self.assertTrue(EvidenceRepository(upgraded).supports_observation_v2())
             with psycopg.connect(upgraded) as c:
                 self.assertEqual(c.execute('SELECT to_jsonb(s) FROM fi.sources s WHERE id=%s',(sid,)).fetchone()[0],row)
                 after={r[0]:r for r in c.execute('SELECT version,sha256,applied_at FROM fi_meta.schema_migrations').fetchall()}
@@ -75,9 +79,10 @@ class IntegratedMigrationPathsTests(unittest.TestCase):
             self.assertEqual(self.constraints(upgraded),self.constraints(reference))
             self.assertEqual(migration.migrate(upgraded),[])
 
-    def test_13_to_current19(self):self.check_path('baseline13')
+    def test_13_to_current20(self):self.check_path('baseline13')
     def test_compatible14_first_then_explicit_reconcile_generation(self):self.check_path('compatible14')
     def test_explicit14_first_then_compatible_reconcile_generation(self):self.check_path('explicit14')
-    def test_integrated16_to_current19(self):self.check_path('integrated16')
-    def test_canonical17_to_current19(self):self.check_path('canonical17')
-    def test_exact18_to_current19(self):self.check_path('exact18')
+    def test_integrated16_to_current20(self):self.check_path('integrated16')
+    def test_canonical17_to_current20(self):self.check_path('canonical17')
+    def test_exact18_to_current20(self):self.check_path('exact18')
+    def test_canonical19_to_current20(self):self.check_path('canonical19')

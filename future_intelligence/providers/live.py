@@ -355,13 +355,39 @@ def _count(value) -> int | None:
     return value if _integer(value, 0, 1000000000) else None
 
 
+def _reported_generation(data: dict) -> dict:
+    """Retain only allowlisted configuration labels, never reasoning content."""
+    def field(value, allowed):
+        if value is None:
+            return {"state": "MISSING", "value": None}
+        if isinstance(value, str) and value in allowed:
+            return {"state": "PRESENT", "value": value}
+        return {"state": "INVALID", "value": None}
+
+    reasoning = data.get("reasoning")
+    if reasoning is None or isinstance(reasoning, dict):
+        reasoning = reasoning or {}
+        effort = field(reasoning.get("effort"), {"none", "minimal", "low", "medium", "high", "xhigh", "max"})
+        mode = field(reasoning.get("mode"), {"standard", "pro"})
+    else:
+        effort = {"state": "INVALID", "value": None}
+        mode = {"state": "INVALID", "value": None}
+    return {"reasoning_effort": effort, "reasoning_mode": mode,
+            "service_tier": field(data.get("service_tier"), {"auto", "default", "flex", "priority", "scale"})}
+
+
 def parse_response(provider: str, wire: WireResponse, category_count: int,
-                   allowed_evidence_ids: set[str]) -> dict:
+                   allowed_evidence_ids: set[str], *, capture_generation: bool = False) -> dict:
+    if type(capture_generation) is not bool or (capture_generation and provider != "openai"):
+        raise Blocked("INVALID_GENERATION_CAPTURE")
     obs = {"protocol": "fi.provider-observation.v1", "status": "INVALID_OUTPUT",
            "http_status": wire.status, "response_sha256": hashlib.sha256(wire.body).hexdigest() if wire.body else None,
            "model_reported": None, "request_id": _public_id(wire.request_id),
            "usage": {"input_tokens": None, "output_tokens": None, "cached_input_tokens": None},
            "output": None}
+    if capture_generation:
+        obs.update(protocol="fi.provider-observation.v2", response_id=None,
+                   generation_reported=_reported_generation({}))
     if wire.error_code:
         obs["status"] = wire.error_code
         return obs
@@ -375,7 +401,11 @@ def parse_response(provider: str, wire: WireResponse, category_count: int,
         text = []
         if provider == "openai":
             obs["model_reported"] = _public_id(data.get("model"))
-            obs["request_id"] = _public_id(data.get("id")) or obs["request_id"]
+            if capture_generation:
+                obs["response_id"] = _public_id(data.get("id"))
+                obs["generation_reported"] = _reported_generation(data)
+            else:
+                obs["request_id"] = _public_id(data.get("id")) or obs["request_id"]
             usage = data.get("usage") or {}
             obs["usage"] = {"input_tokens": _count(usage.get("input_tokens")),
                             "output_tokens": _count(usage.get("output_tokens")),

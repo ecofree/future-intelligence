@@ -4,6 +4,14 @@
 
 ## 当前整合
 
+**2026-11-18 19:35 最新交接：[Terra 诊断审计](TERRA_DIAGNOSTIC_AUDIT.md)。** ZIP 和 58 项清单匹配；新实验 `e1e67317-4416-445b-b5c5-2f0197bf251d` 两题已成功保存，先二元验收再五类别。规范 9f0a994 请求字节、计数回执和完整 v2 规则复算通过；旧现场与规范库的差异已定位，DoH 源码补齐。实际 Terra 库完整指纹、冻结链只读导出和前置规划失败实验的零领取/零预留仍待补证。不能从旧 v1 observation 恢复返回的 reasoning/service_tier。
+
+本批新增前向 0019 和 [ADR-024](../docs/adr/024-provider-observation-metadata.md)，仅向前保存实际响应参数标签和两个 ID，旧库 prepare 前 capability 门控；原 19 份 SQL 与请求正文不变。离线 **372 项通过**，本批数据库/升级/打包/CI 结果见新审计第 5 节，绑定本次 PR HEAD，不借用旧提交通过状态。
+
+当前保留未知预留 **$0.84**，尚未承诺 **$0.16**；未来两次 Terra FORMAL 各 $0.07 的条件计划合计 **$0.98**。本批真实新增费用 **$0**，不为补日志重跑。当前进入 [正常出网与 TSA 审核](../docs/FORMAL_EGRESS_TSA_REVIEW.md)，宿主 fake-IP、生产独立信任、精度与撤销策略尚未通过；无 FORMAL、生产时间证明和自动结算。
+
+### 之前各批次状态（保留时点）
+
 [Terra整合与显式请求合同](TERRA_INTEGRATION_VALIDATION.md)：已取得integration/pr10-official-retest的4d4b91a与脱敏交接包，以双父提交bce7458整合PR11的c9cbcae；保留双方历史和原16份SQL。新0016固定官方Terra生成参数。当前提交的完整CI结果须按本批PR实际记录，不沿用父分支状态。操作与历史差异分析见[官方复测说明](../docs/OFFICIAL_TERRA_RETEST.md)。
 
 2026-11-18 最新续报：[Sol 交接审计](SOL_DIAGNOSTIC_AUDIT.md) 的 ZIP 与 33 项清单 SHA256 已核验。独立诊断 `1644360e-62e6-472c-aaee-c0c19106ab52` 两次 HTTP 200，返回 gpt-6.2-sol、先五类别后二元；不是当前官方 Terra 合同的通过证据。两次输入计数 400、运行时 Python/SQL 覆盖、未交接的 DoH 注入及首发 +1µs 问题均记录保留。未知推理预留合计 **0.70 美元**，FORMAL 和生产时间证明未创建。

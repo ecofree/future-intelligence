@@ -16,7 +16,7 @@ from uuid import UUID
 from future_intelligence.providers.compatible import wire_kind
 from future_intelligence.providers.live import (
     COMPATIBLE, Blocked, HTTPSOnce, KEYS, WireResponse, build_request, credentials,
-    credentials_for, encode, estimated_cost, parse_response, strict_json, validate_entry,
+    credentials_for, encode, estimated_cost, generation_wire, parse_response, strict_json, validate_entry,
 )
 from .repository import uuid_text
 
@@ -34,6 +34,25 @@ def load_count_record(path: str | Path) -> dict:
         return record
     except (OSError, ValueError, TypeError, UnicodeError):
         raise ValueError('INPUT_COUNT_RECORD_INVALID') from None
+
+
+def _generation_contract_status(entry: dict, observation: dict) -> str:
+    """Compare reported labels separately from output validity and billing."""
+    reported = observation['generation_reported']
+    model = observation['model_reported']
+    if model is not None and model != entry['model_id']:
+        return 'MISMATCH'
+    if any(item['state'] == 'INVALID' for item in reported.values()):
+        return 'INVALID'
+    profile = entry['parameters']['generation']
+    expected = {'reasoning_effort': profile['reasoning']['effort'],
+                'reasoning_mode': profile['reasoning']['mode'], 'service_tier': profile['service_tier']}
+    if any(item['state'] == 'PRESENT' and item['value'] != expected[name]
+           for name, item in reported.items()):
+        return 'MISMATCH'
+    if model is None or any(item['state'] == 'MISSING' for item in reported.values()):
+        return 'MISSING'
+    return 'MATCH'
 
 
 def run_once(repo, experiment: str, transport=None, environ=None, *, task_id: str | UUID | None = None,
@@ -58,6 +77,11 @@ def run_once(repo, experiment: str, transport=None, environ=None, *, task_id: st
             if not matches:
                 raise Blocked('CLAIMED_TASK_MISMATCH')
         entry = validate_entry(lease['entry'], lease['cap_microusd'])
+        capture_generation = bool(generation_wire(entry))
+        if capture_generation:
+            capability = getattr(repo, 'supports_observation_v2', None)
+            if not callable(capability) or capability() is not True:
+                raise Blocked('OBSERVATION_V2_MIGRATION_REQUIRED')
         key = credentials_for(entry, environ)
         context = repo.context(lease)
         body = build_request(entry, context)
@@ -101,18 +125,22 @@ def run_once(repo, experiment: str, transport=None, environ=None, *, task_id: st
     spec = context['question_spec']
     categories = 2 if spec['question_type'] == 'binary' else len(spec['bin_edges'])+1
     ids = {x['id'] for x in context['evidence']['items']}
-    obs = parse_response(wire_kind(entry), wire, categories, ids)
+    obs = parse_response(wire_kind(entry), wire, categories, ids, capture_generation=capture_generation)
     repo.observe(lease, obs)  # Persist late usage evidence even if lease has expired.
     if obs['status'] == 'OK':
         receipt = repo.succeed(lease, obs['output']['probabilities_ppm'], obs['response_sha256'], None)
     else:
         receipt = repo.fail(lease, obs['status'], None, False)
     http_status = obs['http_status']
-    return {**identity, 'status': obs['status'], 'receipt': receipt,
+    result = {**identity, 'status': obs['status'], 'receipt': receipt,
             'http_status': http_status if type(http_status) is int and 100 <= http_status <= 599 else None,
             'estimated_microusd': estimated_cost(entry, obs),
             'cost_kind': 'QUOTE_ESTIMATE_NOT_INVOICE', 'actual_cost': None,
             'external_timestamp_status': 'NOT_REQUESTED'}
+    if capture_generation:
+        result.update({name: obs[name] for name in ('request_id', 'response_id', 'model_reported', 'generation_reported')})
+        result['generation_contract_status'] = _generation_contract_status(entry, obs)
+    return result
 
 
 def main() -> int:
