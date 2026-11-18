@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from uuid import UUID
 
 from .repository import DeliveryRepository
 from .timestamps import TrustProfile,request_reply
@@ -26,10 +27,19 @@ def main():
     s=sub.add_parser('score');s.add_argument('experiment')
     t=sub.add_parser('analyze');t.add_argument('run');t.add_argument('--diagnostic',action='store_true')
     w=sub.add_parser('worker');w.add_argument('experiment');w.add_argument('--cycles',type=int,default=1);w.add_argument('--interval',type=float,default=10);w.add_argument('--allow-network',action='store_true')
+    w.add_argument('--task',type=UUID,help='Claim exactly one task; requires --cycles 1.')
+    w.add_argument('--input-count-record',type=Path,help='Validate a matching input-count receipt before sending; requires --task.')
     r=sub.add_parser('recover');r.add_argument('experiment')
     c=sub.add_parser('collect-bls');c.add_argument('permission');c.add_argument('series');c.add_argument('year',type=int);c.add_argument('period');c.add_argument('--allow-network',action='store_true')
     a=sub.add_parser('add-evidence');a.add_argument('input',type=Path)
     args=p.parse_args()
+    if args.command=='worker' and args.task is not None and args.cycles!=1:
+        raise ValueError('exact task selection requires --cycles 1')
+    count_record=None
+    if args.command=='worker' and args.input_count_record is not None:
+        if args.task is None:raise ValueError('--input-count-record requires --task')
+        from future_intelligence.tasks.live_worker import load_count_record
+        count_record=load_count_record(args.input_count_record)
     def load(path):
         if path.stat().st_size>50_000_000:raise ValueError('oversized input')
         return strict_json(path.read_text(encoding='utf-8'))
@@ -89,7 +99,7 @@ def main():
         def step():
             gate=repo.one('SELECT fi.worker_delivery_gate(%s::uuid)',(args.experiment,))
             if not gate['ready']:return {'status':'BLOCKED','reason':gate['reason']}
-            return run_once(worker,args.experiment)
+            return run_once(worker,args.experiment,task_id=args.task,input_count_record=count_record)
         return supervise(step,cycles=args.cycles,interval=args.interval)
 
 

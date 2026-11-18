@@ -85,7 +85,7 @@ def release_question(template: dict, *, known_target: bool, now: datetime | None
     if not re.fullmatch(r'[0-9a-f]{64}',template['calendar_sha256']) or len(template['review_note'].strip())<10:
         raise ValueError('calendar snapshot and explicit review required')
     times=[utc(template[k]) for k in ('forecast_deadline','outcome_not_before','resolution_deadline')]
-    if not utc(now or datetime.now(timezone.utc))<times[0]<times[1]<=times[2]:
+    if not utc(now or datetime.now(timezone.utc))<times[0]<=times[1]<=times[2]:
         raise ValueError('prospective calendar ordering invalid')
     key=f"BLS:{template['series']}:{template['year']}:{template['period']}"
     spec=dict(title='First official release: '+key,event_definition='Value of the exact BLS series and reference period '+key,

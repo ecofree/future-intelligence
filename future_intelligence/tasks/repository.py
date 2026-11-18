@@ -38,7 +38,10 @@ class TaskRepository:
     def bind_worker(self, experiment: str | UUID, entry: str, login: str) -> None:
         self._call("SELECT fi.bind_worker(%s::uuid,%s,%s::name)", (uuid_text(experiment), entry, login))
 
-    def claim(self, experiment: str | UUID, run_kind: str) -> dict | None:
+    def claim(self, experiment: str | UUID, run_kind: str, *, task_id: str | UUID | None = None) -> dict | None:
+        if task_id is not None:
+            return self._call("SELECT fi.claim_task(%s::uuid,%s,%s::uuid)",
+                              (uuid_text(experiment), run_kind, uuid_text(task_id)))
         return self._call("SELECT fi.claim_task(%s::uuid,%s)", (uuid_text(experiment), run_kind))
 
     @staticmethod

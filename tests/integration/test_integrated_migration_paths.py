@@ -35,17 +35,26 @@ class IntegratedMigrationPathsTests(unittest.TestCase):
                 "FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
                 "WHERE n.nspname='fi' ORDER BY p.proname,pg_get_function_identity_arguments(p.oid)").fetchall()
 
+    def constraints(self,dsn):
+        with psycopg.connect(dsn) as c:
+            return c.execute("SELECT t.relname,c.conname,c.contype,pg_get_constraintdef(c.oid) "
+                "FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "
+                "JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='fi' "
+                "ORDER BY t.relname,c.conname").fetchall()
+
     def check_path(self,kind):
         migration=importlib.import_module('future_intelligence.db.migrate')
         all_files={p.name:p.read_bytes() for p in files('future_intelligence.db').joinpath('migrations').iterdir()
                    if p.name.endswith('.sql')}
-        self.assertEqual(len(all_files),17)
+        self.assertEqual(len(all_files),19)
         with self.database() as reference,self.database() as upgraded,tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(migration.migrate(reference),sorted(all_files))
             selected=[n for n in all_files if n[:4]<'0014']
             if kind=='compatible14':selected+=['0014_openai_compatible_provider.sql']
             elif kind=='explicit14':selected+=['0014_explicit_forecast_contract.sql']
             elif kind=='integrated16':selected=[n for n in all_files if n[:4]<'0016']
+            elif kind=='canonical17':selected=[n for n in all_files if n[:4]<'0017']
+            elif kind=='exact18':selected=[n for n in all_files if n[:4]<'0018']
             root=Path(tmp);target=root/'migrations';target.mkdir()
             for name in selected:(target/name).write_bytes(all_files[name])
             with patch.object(migration,'files',return_value=root):
@@ -63,9 +72,12 @@ class IntegratedMigrationPathsTests(unittest.TestCase):
             self.assertEqual({n:r[1] for n,r in after.items()},
                              {n:hashlib.sha256(raw).hexdigest() for n,raw in all_files.items()})
             self.assertEqual(self.definitions(upgraded),self.definitions(reference))
+            self.assertEqual(self.constraints(upgraded),self.constraints(reference))
             self.assertEqual(migration.migrate(upgraded),[])
 
-    def test_13_to_integrated17(self):self.check_path('baseline13')
+    def test_13_to_current19(self):self.check_path('baseline13')
     def test_compatible14_first_then_explicit_reconcile_generation(self):self.check_path('compatible14')
     def test_explicit14_first_then_compatible_reconcile_generation(self):self.check_path('explicit14')
-    def test_integrated16_to_generation17(self):self.check_path('integrated16')
+    def test_integrated16_to_current19(self):self.check_path('integrated16')
+    def test_canonical17_to_current19(self):self.check_path('canonical17')
+    def test_exact18_to_current19(self):self.check_path('exact18')

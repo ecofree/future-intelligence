@@ -206,7 +206,8 @@ def verify_reply(subject_sha256: str, query: bytes, reply: bytes, ca_pem: bytes,
         raise VerificationError('signed message imprint or nonce mismatch')
     if info['gen_time'] > utc(now or datetime.now(UTC)) + timedelta(seconds=5):
         raise VerificationError('timestamp is in the future')
-    eligible = info['upper_time'] <= utc(deadline)
+    # Even the uncertainty upper bound must precede the exclusive cutoff.
+    eligible = info['upper_time'] < utc(deadline)
     return dict(protocol='fi.rfc3161-verification.v1', status='VERIFIED' if eligible else 'VERIFIED_LATE',
                 subject_sha256=subject_sha256, gen_time=info['gen_time'].isoformat(),
                 upper_time=info['upper_time'].isoformat(), accuracy_us=info['accuracy_us'],

@@ -45,6 +45,7 @@ class CpiSettlementTests(unittest.TestCase):
 
     def test_exact_fraction_and_frozen_constants_are_preserved(self):
         result = cpi_settlement_candidate('337.511')
+        self.assertEqual(result['contract'], 'fi.cpi-2026m11.first-release.v2')
         yoy = result['yoy']
         self.assertEqual(result['index_thousandths'], 337511)
         self.assertEqual(result['binary']['threshold_index_value_text'], '337.511')

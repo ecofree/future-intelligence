@@ -63,7 +63,7 @@ def cpi_settlement_candidate(index_value_text: str) -> dict:
         raise ArithmeticError('finite decimal serialization changed the exact outcome category')
 
     return {
-        'contract': 'fi.cpi-2026m11.first-release.v1',
+        'contract': 'fi.cpi-2026m11.first-release.v2',
         'status': 'CANDIDATE_REQUIRES_INDEPENDENT_REVIEW',
         'source_verified': False,
         'first_release_verified': False,
