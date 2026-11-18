@@ -62,7 +62,9 @@ def run_once(repo, experiment: str, transport=None, environ=None) -> dict:
         receipt = repo.succeed(lease, obs['output']['probabilities_ppm'], obs['response_sha256'], None)
     else:
         receipt = repo.fail(lease, obs['status'], None, False)
+    http_status = obs['http_status']
     return {**identity, 'status': obs['status'], 'receipt': receipt,
+            'http_status': http_status if type(http_status) is int and 100 <= http_status <= 599 else None,
             'estimated_microusd': estimated_cost(entry, obs),
             'cost_kind': 'QUOTE_ESTIMATE_NOT_INVOICE', 'actual_cost': None,
             'external_timestamp_status': 'NOT_REQUESTED'}

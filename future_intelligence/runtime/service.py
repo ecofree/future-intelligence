@@ -48,6 +48,10 @@ def loop(step, *, cycles: int, interval: float, emit, stop=lambda:False, sleep=t
         except Exception:
             emit({'status':'STOPPED_UNCERTAIN','automatic_redispatch':False});return 2
         emit(result)
+        # The worker has already recorded the failed attempt and unknown cost.
+        # Rejected credentials must stop this supervisor before its next claim.
+        if result.get('http_status') == 401:
+            return 2
         if result.get('status') in {'BLOCKED','NO_REDISPATCH','STOPPED_UNCERTAIN'}:
             return 2
         if index+1<cycles:
