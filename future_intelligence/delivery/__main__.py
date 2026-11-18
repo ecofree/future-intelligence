@@ -95,7 +95,13 @@ def main():
 
 if __name__=='__main__':
     try:
-        print(json.dumps(main(),ensure_ascii=False,default=str,allow_nan=False))
+        result=main()
+        print(json.dumps(result,ensure_ascii=False,default=str,allow_nan=False))
+        # Worker lists preserve their observations; a stopped worker is not success.
+        if isinstance(result,list) and any(isinstance(item,dict) and (
+            item.get('http_status')==401 or item.get('status') in
+            {'BLOCKED','NO_REDISPATCH','STOPPED_UNCERTAIN'}) for item in result):
+            sys.exit(2)
     except Exception as exc:
         # No DSNs, keys, HTTP bodies or stack traces in operational output.
         print(json.dumps({'status':'BLOCKED_OR_UNCERTAIN','error_type':type(exc).__name__,'automatic_redispatch':False}))

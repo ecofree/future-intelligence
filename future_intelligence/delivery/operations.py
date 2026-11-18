@@ -108,6 +108,9 @@ def supervise(step, *, cycles: int, interval: float, sleep=time.sleep) -> list[d
         except Exception:
             results.append({'status':'STOPPED_UNCERTAIN','reason':'NO_AUTOMATIC_REDISPATCH'});break
         results.append(result)
+        # run_once has saved the failed attempt and its unknown cost already.
+        if result.get('http_status') == 401:
+            break
         if result.get('status') in ('BLOCKED','NO_REDISPATCH','STOPPED_UNCERTAIN'):
             break
         if n+1<cycles:sleep(interval)
