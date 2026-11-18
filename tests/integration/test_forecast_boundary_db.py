@@ -214,7 +214,12 @@ class ForecastBoundaryIntegrationTests(unittest.TestCase):
                     old_score = c.execute('SELECT to_jsonb(r) FROM fi.score_runs r WHERE id=%s', (old_run,)).fetchone()[0]
                     old_migrations = c.execute('SELECT version,sha256,applied_at FROM fi_meta.schema_migrations ORDER BY version').fetchall()
                 self.assertEqual(old_score['algorithm'], 'fi.score.v1')
-                self.assertEqual(migration.migrate(admin_dsn), ['0018_exclusive_forecast_boundary.sql'])
+                # This historical regression isolates 0018 itself. Current-head
+                # upgrade coverage (including later migrations) is separate.
+                boundary = files('future_intelligence.db').joinpath('migrations', '0018_exclusive_forecast_boundary.sql')
+                (target / boundary.name).write_bytes(boundary.read_bytes())
+                with patch.object(migration, 'files', return_value=package):
+                    self.assertEqual(migration.migrate(admin_dsn), ['0018_exclusive_forecast_boundary.sql'])
                 with psycopg.connect(admin_dsn) as c:
                     self.assertEqual(c.execute('SELECT to_jsonb(v) FROM fi.question_versions v WHERE id=%s',
                                      (item['version'],)).fetchone()[0], old_question)
