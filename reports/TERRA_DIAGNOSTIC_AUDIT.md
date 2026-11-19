@@ -100,3 +100,9 @@ Sol 的两个实际覆盖为 `valid_terra_generation/native_entries_allowed`，�
 `scripts/check_distribution.py` 的 source snapshot、wheel 和仓库外 `python -I ... installed` 检查通过：**61 个包文件 / 21 份迁移**逐项匹配。构建使用 `pip wheel --no-deps --no-build-isolation`，在独立临时 venv 从本地 wheel 安装；wheel SHA256 为 `71080c804a8a1e9748de33749a74eee4c591dd779dada2ace4a3c818d8b07bb8`。18 个变更文件的限定凭据模式检查无命中；原始实验附件、模型响应、私钥和实际数据库凭证均未加入公开仓库。本提交自己的 PostgreSQL、重启及浏览器结果以 PR #12 的本批 CI 区块为准。
 
 公开材料审计附件 `fi-tsa-public-review-20261119.zip` 包含四份原始公开材料、实际 OpenSSL 命令与输出、用途边界及 SHA256 清单，压缩包 SHA256 为 `cebbe4070117a11ad5db9b3c4cad30fa4fb5a8fae01f2a8a6162433764a8533f`。没有密钥、模型原始内容或私人实验附件；组包本地时间不是可信事前证明。
+
+首轮实现提交 **dae40793fa48342f9313ff8c4009d41864249a27** 的离线矩阵、打包及隔离部署/205 行 Chromium 回归通过。数据库 [44438340051](https://github.com/ecofree/future-intelligence/actions/runs/44438340051) 在 PG16/17 各运行 231 项，八条升级路径全部通过；新增边界夹具却直接用超级用户插入，被既有隔离身份检查拒绝，PG16 报 3 个该夹具错误。PG17 还暴露三份注册证明只等待第一份 upper 的时序竞争，合计 4 个错误。这些失败日志保留，未将整体数据库状态写成通过。
+
+后续修复仅改这份数据库测试：边界断言在独立、必回滚的合成事务里以真实 verifier session_user 执行；所需测试 INSERT/ledger_rc EXECUTE 临时权限和合成行全部回滚，前后断言没有遗留。正式 verifier 的权限与安全检查不变。三份证明等待各自 upper 的最大值后再领取，15 秒 CRL 窗口和严格截止不放宽。实现和全部 21 份迁移不改；修复提交自己的完整 CI 另见 PR #12。
+
+2026-11-19 重新读取 [BLS CPI 日历](https://www.bls.gov/schedule/news_release/cpi.htm) 与[12 月官方日历](https://www.bls.gov/schedule/2026/12_sched.htm)，11 月 CPI 仍列为 12 月 10 日 08:30 美东，即北京时间 **2026-12-10 21:30**。这是本会话日历研究复核，不替代原运行环境的许可快照和独立入场确认；正式登记前仍须再次核对。

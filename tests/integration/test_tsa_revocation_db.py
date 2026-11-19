@@ -218,21 +218,40 @@ class TSARevocationDatabaseTests(unittest.TestCase):
             candidate = {**report, 'crl_valid_from': start.isoformat(), 'crl_valid_until': end.isoformat()}
             with self.subTest(start=start, end=end), self.assertRaises(psycopg.errors.InvalidParameterValue):
                 self.attest(request, candidate)
-        # Owner-only synthetic insertion exercises the INSERT guard separately
-        # from the public attestation entry point; no valid row is altered.
+        # Exercise the INSERT guard as the isolated verifier, not the fixture
+        # owner (a superuser is considered a member of every guarded role).
+        # The grants, changed session identity and synthetic row all roll back.
+        verifier = self.logins['verifier']
+
+        def insert_at(check):
+            with psycopg.connect(OWNER_DSN) as c:
+                try:
+                    c.execute(sql.SQL('GRANT INSERT ON fi.anchor_verifications TO {}').format(
+                        sql.Identifier(verifier)))
+                    c.execute(sql.SQL('GRANT EXECUTE ON FUNCTION fi.ledger_rc() TO {}').format(
+                        sql.Identifier(verifier)))
+                    c.execute(sql.SQL('SET SESSION AUTHORIZATION {}').format(sql.Identifier(verifier)))
+                    self.assertEqual(c.execute('SELECT session_user').fetchone()[0], verifier)
+                    c.execute('''INSERT INTO fi.anchor_verifications(request_id,status,upper_time,report,verified_at)
+                                 VALUES(%s,%s,%s,%s,%s)''',
+                              (request, report['status'], report['upper_time'], Jsonb(report), check))
+                finally:
+                    c.rollback()
+
+        privilege = (verifier, 'fi.anchor_verifications', 'INSERT')
+        function_privilege = (verifier, 'fi.ledger_rc()', 'EXECUTE')
+        self.assertFalse(self.admin('SELECT has_table_privilege(%s,%s,%s)', privilege))
+        self.assertFalse(self.admin('SELECT has_function_privilege(%s,%s,%s)', function_privilege))
         for check in (datetime.fromisoformat(report['crl_valid_from']) - timedelta(microseconds=1),
                       datetime.fromisoformat(report['crl_valid_until'])):
             with self.subTest(check=check), self.assertRaises(psycopg.errors.InvalidParameterValue):
-                self.admin('''INSERT INTO fi.anchor_verifications(request_id,status,upper_time,report,verified_at)
-                              VALUES(%s,%s,%s,%s,%s) RETURNING request_id''',
-                           (request, report['status'], report['upper_time'], Jsonb(report), check))
-        # The lower bound itself is inclusive. Roll back this owner-only
-        # synthetic timestamp so the persisted record still uses the real check.
-        with psycopg.connect(OWNER_DSN) as c:
-            c.execute('''INSERT INTO fi.anchor_verifications(request_id,status,upper_time,report,verified_at)
-                         VALUES(%s,%s,%s,%s,%s)''',
-                      (request, report['status'], report['upper_time'], Jsonb(report), report['crl_valid_from']))
-            c.rollback()
+                insert_at(check)
+        # The lower bound itself is inclusive; only the final real attestation
+        # below persists, with its actual verification time.
+        insert_at(report['crl_valid_from'])
+        self.assertFalse(self.admin('SELECT has_table_privilege(%s,%s,%s)', privilege))
+        self.assertFalse(self.admin('SELECT has_function_privilege(%s,%s,%s)', function_privilege))
+        self.assertEqual(self.admin('SELECT count(*) FROM fi.anchor_verifications WHERE request_id=%s', (request,)), 0)
         self.attest(request, report)
 
     def test_expired_crl_blocks_new_claim_and_prepare_but_keeps_historical_score(self):
@@ -243,9 +262,10 @@ class TSARevocationDatabaseTests(unittest.TestCase):
         until = now + timedelta(seconds=15)
         crl = fixture_crl(Path(self.tmp.name), last_update=now - timedelta(seconds=1), next_update=until)
         request, report = self.anchor(completed[0], completed[3], crl=crl)
-        self.anchor(claimed[0], claimed[3], crl=crl)
-        self.anchor(queued[0], queued[3], crl=crl)
-        self.wait_upper(report)
+        _, claimed_report = self.anchor(claimed[0], claimed[3], crl=crl)
+        _, queued_report = self.anchor(queued[0], queued[3], crl=crl)
+        self.wait_upper(max((report, claimed_report, queued_report),
+                            key=lambda item: datetime.fromisoformat(item['upper_time'])))
         self.complete_fixture_call(completed[0])
         held_lease = self.claim(claimed[0])
         held_body = base.previous.fixture.build_request(held_lease['entry'], self.er['worker'].context(held_lease))
