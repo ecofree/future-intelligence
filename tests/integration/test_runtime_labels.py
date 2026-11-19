@@ -15,7 +15,7 @@ class RuntimeLabelTests(unittest.TestCase):
 
     def test_live_diagnostic_labels_are_not_hidden_in_nested_spec(self):
         e,*_=self.make()
-        rows=DeliveryRepository(self.dsns['operator']).overview()
+        rows=DeliveryRepository(self.dsns['operator']).overview(experiment_id=e)
         row=next(x for x in rows if str(x['id'])==str(e))
         self.assertEqual(row['run_kind'],'LIVE')
         self.assertEqual(row['operation_mode'],'DIAGNOSTIC')
@@ -23,5 +23,5 @@ class RuntimeLabelTests(unittest.TestCase):
 
     def test_unconfigured_live_never_looks_formal(self):
         e,*_=self.make(operation_mode=None)
-        row=next(x for x in DeliveryRepository(self.dsns['operator']).overview() if str(x['id'])==str(e))
+        row=next(x for x in DeliveryRepository(self.dsns['operator']).overview(experiment_id=e) if str(x['id'])==str(e))
         self.assertEqual(row['operation_mode'],'UNCONFIGURED')

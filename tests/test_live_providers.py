@@ -184,6 +184,7 @@ class FakeRepo:
                     'cap_microusd':1000000,'run_kind':'LIVE',
                     'lease_until':(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()}
     def claim(self,e,k): self.events.append('claim'); return self.lease
+    def supports_observation_v2(self): return True
     def context(self,l): self.events.append('context'); return input_data()
     def prepare(self,l,b): self.events.append('prepare'); return self.marker
     def observe(self,l,o): self.events.append('observe'); self.obs=o

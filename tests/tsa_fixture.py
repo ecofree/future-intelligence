@@ -1,6 +1,8 @@
 """Ephemeral TEST ONLY TSA; never use its CA as a production trust anchor."""
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import subprocess
+import tempfile
 
 
 def run(*args):
@@ -46,3 +48,76 @@ def timestamp(config, query):
     (directory/'q.tsq').write_bytes(query)
     run('openssl','ts','-reply','-config',str(config),'-queryfile',str(directory/'q.tsq'),'-out',str(directory/'r.tsr'))
     return (directory/'r.tsr').read_bytes()
+
+
+def fixture_crl(directory: Path, *, issuer='ca', certificates=(), revoked=(),
+                last_update=None, next_update=None) -> bytes:
+    """Issue a real, local TEST ONLY CRL without changing the shared TSA fixture."""
+    directory = directory.resolve()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    last_update = last_update if last_update is not None else now - timedelta(minutes=1)
+    next_update = next_update if next_update is not None else now + timedelta(days=1)
+    for value in (last_update, next_update):
+        if value.tzinfo is None:
+            raise ValueError('fixture CRL times require a timezone')
+    with tempfile.TemporaryDirectory(prefix='crl-', dir=directory) as tmp:
+        work = Path(tmp)
+        (work/'index').write_text('')
+        (work/'serial').write_text('01\n')
+        (work/'crlnumber').write_text('01\n')
+        config = work/'ca.cnf'
+        config.write_text(f'''[ca]
+default_ca=fixture
+[fixture]
+database={work/'index'}
+serial={work/'serial'}
+crlnumber={work/'crlnumber'}
+new_certs_dir={work}
+certificate={directory/(issuer+'.pem')}
+private_key={directory/(issuer+'.key')}
+default_md=sha256
+default_days=2
+default_crl_days=1
+policy=fixture_policy
+unique_subject=no
+crl_extensions=fixture_crl
+[fixture_policy]
+commonName=supplied
+[fixture_crl]
+authorityKeyIdentifier=keyid:always
+''')
+        entries = dict.fromkeys(Path(cert).resolve() for cert in (*certificates, *revoked))
+        for cert in entries:
+            run('openssl', 'ca', '-batch', '-config', str(config), '-valid', str(cert))
+        for cert in revoked:
+            run('openssl', 'ca', '-batch', '-config', str(config), '-revoke', str(Path(cert).resolve()),
+                '-crl_reason', 'keyCompromise')
+        output = work/'crl.pem'
+        run('openssl', 'ca', '-batch', '-config', str(config), '-gencrl',
+            '-crl_lastupdate', last_update.astimezone(timezone.utc).strftime('%Y%m%d%H%M%SZ'),
+            '-crl_nextupdate', next_update.astimezone(timezone.utc).strftime('%Y%m%d%H%M%SZ'),
+            '-out', str(output))
+        return output.read_bytes()
+
+
+def fixture_intermediate_tsa(directory: Path):
+    """A separate root -> intermediate -> TSA TEST ONLY chain for full-chain tests."""
+    ca, config = fixture_tsa(directory)
+    run('openssl', 'req', '-new', '-newkey', 'rsa:2048', '-nodes',
+        '-keyout', str(directory/'intermediate.key'), '-out', str(directory/'intermediate.csr'),
+        '-subj', '/CN=FI FIXTURE INTERMEDIATE NOT PRODUCTION')
+    extensions = directory/'intermediate.ext'
+    extensions.write_text('basicConstraints=critical,CA:TRUE,pathlen:0\n'
+                          'keyUsage=critical,keyCertSign,cRLSign\n'
+                          'subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n')
+    run('openssl', 'x509', '-req', '-in', str(directory/'intermediate.csr'),
+        '-CA', str(directory/'ca.pem'), '-CAkey', str(directory/'ca.key'), '-CAcreateserial',
+        '-out', str(directory/'intermediate.pem'), '-days', '2', '-extfile', str(extensions))
+    run('openssl', 'x509', '-req', '-in', str(directory/'tsa.csr'),
+        '-CA', str(directory/'intermediate.pem'), '-CAkey', str(directory/'intermediate.key'),
+        '-CAcreateserial', '-out', str(directory/'tsa.pem'), '-days', '2',
+        '-extfile', str(directory/'ext.cnf'))
+    chain = directory/'chain.pem'
+    chain.write_bytes((directory/'intermediate.pem').read_bytes() + ca)
+    config.write_text(config.read_text().replace(f'certs={directory/"ca.pem"}\n', f'certs={chain}\n'))
+    return ca, config

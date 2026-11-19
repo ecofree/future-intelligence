@@ -49,7 +49,8 @@ class QuestionSpecTests(unittest.TestCase):
         with self.assertRaises(ValueError): validate_spec(spec)
 
     def test_time_order(self):
-        spec = example_spec(); spec['forecast_deadline'] = spec['outcome_not_before']
+        spec = example_spec(); spec['forecast_deadline'] = (
+            datetime.fromisoformat(spec['outcome_not_before']) + timedelta(microseconds=1)).isoformat()
         with self.assertRaises(ValueError): validate_spec(spec)
 
     def test_equivalent_time_offsets(self):
