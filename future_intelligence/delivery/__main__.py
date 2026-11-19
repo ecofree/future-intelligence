@@ -7,7 +7,7 @@ import sys
 from uuid import UUID
 
 from .repository import DeliveryRepository
-from .timestamps import TrustProfile,request_reply
+from .timestamps import MAX_PROOF,request_reply,trust_profile_from_dict
 from .batch import strict_json
 from .exports import verify_export
 from .evaluation import compare_score_rows
@@ -20,8 +20,10 @@ def main():
     c=sub.add_parser('capture');c.add_argument('experiment');c.add_argument('kind',choices=['REGISTRATION','FORECAST']);c.add_argument('--plan',type=Path);c.add_argument('--profile',type=Path)
     a=sub.add_parser('anchor');a.add_argument('batch');a.add_argument('--url',required=True);a.add_argument('--allowed-host',required=True);a.add_argument('--allow-network',action='store_true')
     v=sub.add_parser('verify-anchor');v.add_argument('request');v.add_argument('--ca',type=Path,required=True);v.add_argument('--profile',type=Path,required=True)
+    v.add_argument('--crl',type=Path,help='Reviewed PEM CRL bundle; required by the offline full-chain CRL profile.')
     e=sub.add_parser('export');e.add_argument('experiment');e.add_argument('output',type=Path)
     v=sub.add_parser('verify-export');v.add_argument('input',type=Path);v.add_argument('--ca',type=Path,required=True);v.add_argument('--profile',type=Path,required=True)
+    v.add_argument('--crl',type=Path,help='Optional current CRL bundle; otherwise reverify the CRL bytes retained with each proof.')
     r=sub.add_parser('resolve');r.add_argument('input',type=Path)
     c=sub.add_parser('confirm');c.add_argument('proposal');c.add_argument('--note',required=True)
     s=sub.add_parser('score');s.add_argument('experiment')
@@ -44,9 +46,14 @@ def main():
         if path.stat().st_size>50_000_000:raise ValueError('oversized input')
         return strict_json(path.read_text(encoding='utf-8'))
     def profile(path):
-        values=load(path);values['policy_oids']=tuple(values['policy_oids']);return TrustProfile(**values)
+        return trust_profile_from_dict(load(path))
+    def crl(path):
+        if path is None:return None
+        with path.open('rb') as source:value=source.read(MAX_PROOF+1)
+        if not 1<=len(value)<=MAX_PROOF:raise ValueError('invalid CRL bundle size')
+        return value
     if args.command=='verify-export':
-        return verify_export(load(args.input),args.ca.read_bytes(),profile(args.profile))
+        return verify_export(load(args.input),args.ca.read_bytes(),profile(args.profile),crl_bundle=crl(args.crl))
     role={'verify-anchor':'VERIFIER','resolve':'RESOLVER','confirm':'REVIEWER','score':'SCORER','analyze':'SCORER','worker':'WORKER','collect-bls':'SOURCE_ADMIN','add-evidence':'RESOLVER'}.get(args.command,'OPERATOR')
     dsn=os.environ.get('FI_'+role+'_DATABASE_URL')
     if not dsn:raise ValueError('required isolated role DSN missing')
@@ -62,7 +69,8 @@ def main():
         except Exception:
             repo.receive(rid,None,'TSA_NETWORK_OR_REPLY_FAILURE');return {'request_id':rid,'status':'FAILED'}
         repo.receive(rid,reply);return {'request_id':rid,'status':'RECEIVED_NOT_VERIFIED'}
-    if args.command=='verify-anchor':return repo.verify_anchor(args.request,args.ca.read_bytes(),profile(args.profile))
+    if args.command=='verify-anchor':
+        return repo.verify_anchor(args.request,args.ca.read_bytes(),profile(args.profile),crl_bundle=crl(args.crl))
     if args.command=='export':
         value=repo.export(args.experiment)
         # Never overwrite an older export; no public upload is performed.

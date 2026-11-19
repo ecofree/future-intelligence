@@ -14,9 +14,9 @@ from psycopg import sql
 from psycopg.conninfo import make_conninfo
 from psycopg.types.json import Jsonb
 import test_live_evidence as previous
-from tsa_fixture import fixture_tsa, timestamp
+from tsa_fixture import fixture_tsa, fixture_crl, timestamp
 from future_intelligence.delivery.repository import DeliveryRepository
-from future_intelligence.delivery.timestamps import TrustProfile
+from future_intelligence.delivery.timestamps import CRLTrustProfile
 
 PLAN=dict(protocol='fi.analysis.v1',seed=73,resamples=200,alpha_ppm=50000,
           min_clusters=20,comparisons=[],stopping_rule='FIXED_REGISTERED_BATCH')
@@ -29,7 +29,9 @@ class OperationalAdmissionTests(unittest.TestCase):
         cls.tmp=tempfile.TemporaryDirectory()
         cls.ca,cls.tsa=fixture_tsa(Path(cls.tmp.name))
         # Production-shaped policy only to test gates. This CA is NOT independent.
-        cls.profile=TrustProfile(hashlib.sha256(cls.ca).hexdigest(),('1.3.6.1.4.1.55555.1',),fixture=False)
+        cls.profile=CRLTrustProfile(hashlib.sha256(cls.ca).hexdigest(),('1.3.6.1.4.1.55555.1',),fixture=False,
+            revocation_policy='offline-full-chain-crl-v1',max_crl_age_seconds=3600)
+        cls.crl=fixture_crl(Path(cls.tmp.name))
         cls.profile_json=json.loads(json.dumps(asdict(cls.profile)))
         login='fi_admission_verifier_'+uuid4().hex[:8];password=uuid4().hex
         with psycopg.connect(previous.previous.DSN) as c:
@@ -70,7 +72,7 @@ class OperationalAdmissionTests(unittest.TestCase):
     def anchored(self):
         e,v,p,bid=self.registered();repo=DeliveryRepository(self.dsns['operator'])
         rid,q=repo.new_anchor(bid);repo.receive(rid,timestamp(self.tsa,q))
-        report=DeliveryRepository(self.dsns['verifier']).verify_anchor(rid,self.ca,self.profile)
+        report=DeliveryRepository(self.dsns['verifier']).verify_anchor(rid,self.ca,self.profile,crl_bundle=self.crl)
         upper=datetime.fromisoformat(report['upper_time'])
         time.sleep(max(0,(upper-datetime.now(timezone.utc)).total_seconds())+.02)
         return e,v,p,bid

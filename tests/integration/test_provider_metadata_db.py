@@ -306,8 +306,16 @@ class ProviderMetadataDBTests(unittest.TestCase):
                     FROM pg_trigger WHERE tgrelid='fi.provider_observations'::regclass
                       AND tgname='provider_observation_contract'"""
                 trigger = self.admin(trigger_sql)
-                self.assertEqual(migration_module.migrate(owner_dsn), [MIGRATION])
-                self.assertEqual(migration_module.migrate(owner_dsn), [])
+                # This case owns the 0019 upgrade contract. Later migrations
+                # have separate upgrade tests and must not silently join it.
+                with tempfile.TemporaryDirectory() as temp:
+                    root = Path(temp); directory = root / 'migrations'; directory.mkdir()
+                    for source in files('future_intelligence.db').joinpath('migrations').iterdir():
+                        if source.name.endswith('.sql') and source.name <= MIGRATION:
+                            (directory / source.name).write_bytes(source.read_bytes())
+                    with patch.object(migration_module, 'files', return_value=root):
+                        self.assertEqual(migration_module.migrate(owner_dsn), [MIGRATION])
+                        self.assertEqual(migration_module.migrate(owner_dsn), [])
                 self.assertEqual(self.admin(snapshot_sql, (old_lease['attempt_id'],)), before)
                 self.assertEqual(self.admin(migration_sql, (MIGRATION,)), migration_rows)
                 self.assertEqual(self.admin(trigger_sql), trigger)

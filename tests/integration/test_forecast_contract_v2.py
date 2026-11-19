@@ -61,7 +61,7 @@ class ForecastContractV2Tests(unittest.TestCase):
         operator=DeliveryRepository(self.dsns['operator'])
         rid,q=operator.new_anchor(bid)
         operator.receive(rid,timestamp(self.tsa,q))
-        report=DeliveryRepository(self.dsns['verifier']).verify_anchor(rid,self.ca,self.profile)
+        report=DeliveryRepository(self.dsns['verifier']).verify_anchor(rid,self.ca,self.profile,crl_bundle=self.crl)
         time.sleep(max(0,(datetime.fromisoformat(report['upper_time'])-datetime.now(timezone.utc)).total_seconds())+.02)
         self.assertEqual(report['status'],'VERIFIED')
         return report

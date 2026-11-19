@@ -42,11 +42,17 @@ class IntegratedMigrationPathsTests(unittest.TestCase):
                 "JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='fi' "
                 "ORDER BY t.relname,c.conname").fetchall()
 
+    def views(self,dsn):
+        with psycopg.connect(dsn) as c:
+            return c.execute("SELECT c.relname,pg_get_viewdef(c.oid),c.relacl::text,c.reloptions "
+                "FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname='fi' AND c.relkind='v' ORDER BY c.relname").fetchall()
+
     def check_path(self,kind):
         migration=importlib.import_module('future_intelligence.db.migrate')
         all_files={p.name:p.read_bytes() for p in files('future_intelligence.db').joinpath('migrations').iterdir()
                    if p.name.endswith('.sql')}
-        self.assertEqual(len(all_files),20)
+        self.assertEqual(len(all_files),21)
         with self.database() as reference,self.database() as upgraded,tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(migration.migrate(reference),sorted(all_files))
             selected=[n for n in all_files if n[:4]<'0014']
@@ -56,12 +62,13 @@ class IntegratedMigrationPathsTests(unittest.TestCase):
             elif kind=='canonical17':selected=[n for n in all_files if n[:4]<'0017']
             elif kind=='exact18':selected=[n for n in all_files if n[:4]<'0018']
             elif kind=='canonical19':selected=[n for n in all_files if n[:4]<'0019']
+            elif kind=='observed20':selected=[n for n in all_files if n[:4]<'0020']
             root=Path(tmp);target=root/'migrations';target.mkdir()
             for name in selected:(target/name).write_bytes(all_files[name])
             with patch.object(migration,'files',return_value=root):
                 self.assertEqual(migration.migrate(upgraded),sorted(selected))
             from future_intelligence.evidence.repository import EvidenceRepository
-            self.assertFalse(EvidenceRepository(upgraded).supports_observation_v2())
+            self.assertEqual(EvidenceRepository(upgraded).supports_observation_v2(),kind=='observed20')
             with psycopg.connect(upgraded) as c:
                 sid=c.execute('SELECT fi.register_source(%s,%s)',
                     ('SYNTHETIC PATH SENTINEL','https://example.invalid/sentinel')).fetchone()[0]
@@ -77,12 +84,14 @@ class IntegratedMigrationPathsTests(unittest.TestCase):
                              {n:hashlib.sha256(raw).hexdigest() for n,raw in all_files.items()})
             self.assertEqual(self.definitions(upgraded),self.definitions(reference))
             self.assertEqual(self.constraints(upgraded),self.constraints(reference))
+            self.assertEqual(self.views(upgraded),self.views(reference))
             self.assertEqual(migration.migrate(upgraded),[])
 
-    def test_13_to_current20(self):self.check_path('baseline13')
+    def test_13_to_current21(self):self.check_path('baseline13')
     def test_compatible14_first_then_explicit_reconcile_generation(self):self.check_path('compatible14')
     def test_explicit14_first_then_compatible_reconcile_generation(self):self.check_path('explicit14')
-    def test_integrated16_to_current20(self):self.check_path('integrated16')
-    def test_canonical17_to_current20(self):self.check_path('canonical17')
-    def test_exact18_to_current20(self):self.check_path('exact18')
-    def test_canonical19_to_current20(self):self.check_path('canonical19')
+    def test_integrated16_to_current21(self):self.check_path('integrated16')
+    def test_canonical17_to_current21(self):self.check_path('canonical17')
+    def test_exact18_to_current21(self):self.check_path('exact18')
+    def test_canonical19_to_current21(self):self.check_path('canonical19')
+    def test_observed20_to_current21(self):self.check_path('observed20')

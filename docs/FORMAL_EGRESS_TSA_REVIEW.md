@@ -1,6 +1,6 @@
 # Terra 诊断之后：第三关的具体剩余工作
 
-更新：2026-11-18。本次诊断 `e1e67317-4416-445b-b5c5-2f0197bf251d` 已有两次成功保存记录；[交接审计](../reports/TERRA_DIAGNOSTIC_AUDIT.md) 已复算请求与计数。接下来修正常出网、补齐生产 TSA 独立审核和少量只读记录；不为日志补证重跑收费诊断。
+更新：2026-11-19。本次诊断 `e1e67317-4416-445b-b5c5-2f0197bf251d` 已有两次成功保存记录；[交接审计](../reports/TERRA_DIAGNOSTIC_AUDIT.md) 已复算请求与计数。本批补严格离线 CRL 验证与前向资格合同，见 [ADR-025](adr/025-offline-crl-admission.md)。模型请求不变，不新增收费诊断；正常出网、生产信任独立审核和原库只读补证仍未通过。
 
 ## 1. 一次只读补证
 
@@ -24,7 +24,7 @@ psql -X --set=ON_ERROR_STOP=1 --file=scripts/audit_terra_readonly.sql --output=t
 
 请求必须通过现有 PublicHTTPS/官方直连约束。外部快照逐跳限定获准 HTTPS 主机、端口、地址和 TLS；保存独立 hop 对象，避免自引用日志。不得放行 198.18/15、固定绕过 IP、关闭证书验证、接受任意重定向或自动换供应商。连通探测不触发生成；一次官方 HTTP 200 或 TSA 302 不替代这套证据。
 
-此会话不能访问原宿主，也未更改它的网络；本会话获取公开证书时的 DNS 失败只说明本会话环境，不能冒充原宿主新的验证结果。
+此会话不能访问原宿主，也未更改它的网络。2026-11-19 本会话的研究下载通过继承环境代理的 HTTPS 取得公开证书及 CRL；同日普通 `socket.getaddrinfo` 对 api.openai.com、api.bls.gov、freetsa.org、www.bls.gov 均返回 EAI_AGAIN(-3)。下载可达不表示直连 PublicHTTPS 已通过，更不能替代原宿主或实际 worker 网络命名空间的复验；原交接中 fake-IP 阻断仍未解除。
 
 ## 3. TSA 的独立审核必须解决的事实
 
@@ -35,11 +35,30 @@ psql -X --set=ON_ERROR_STOP=1 --file=scripts/audit_terra_readonly.sql --output=t
 | [英文首页](https://www.freetsa.org/index_en.php)、[CPS](https://www.freetsa.org/freetsa_cps.html) | `8bfb0305bb64e2571ca507552ef3245cb1c2fee8728e0ff8689225081ea13467` |
 | [德文首页](https://www.freetsa.org/index_de.php) | `aaeb619d11a63f75d06d104a926b85c76f8276bd9eae616e82d0db5cc5ff149d` |
 
-这些页面公布相同 CA 文件摘要 `2151b61137ffa86bf664691ba67e7da0b19f98c758e3d228d5d8ebf27e044438`，但没有说明上述 TSA 摘要差异。它可能涉及页面更新或编码，尚不能定性，更不能任选一个批准生产。应取得官方实际证书原字节，分别记录文件 SHA 与 DER 证书指纹，核对签发者、序列号、密钥、有效期及链；不要混淆 PEM 文件哈希、DER 指纹和当前网站 TLS 证书。
+2026-11-19 实取 [根证书](https://freetsa.org/files/cacert.pem)、[TSA 证书](https://freetsa.org/files/tsa.crt)、[CRL](https://www.freetsa.org/crl/root_ca.crl) 和英文页面链接的[已过期旧 TSA 证书](https://www.freetsa.org/files/tsa.crt_expired)。研究下载继承环境代理，均记录 HTTP 200、TLS 验证结果 0，未使用 `-k`、固定解析 IP 或临时 DoH 注入。保留原文件字节，分别计算文件摘要与 DER 证书指纹：
 
-CPS 公布 [根证书](https://freetsa.org/files/cacert.pem)、[TSA 证书](https://freetsa.org/files/tsa.crt)、[CRL](https://www.freetsa.org/crl/root_ca.crl) 和 OCSP 地址。URL 是待审核来源，不是已信任的根或撤销结果。取得真实材料后，由独立于执行方的审核者确认根的来源和身份、timestamp 专用签名用途、认可的 policy OID、签名/链有效期、撤销查询和失败策略；保留原签名材料和审核结论。不能把自签根可自验签当成身份信任。
+| 材料 | 原文件 SHA256 | DER 证书 SHA256 |
+|---|---|---|
+| CA PEM | `2151b61137ffa86bf664691ba67e7da0b19f98c758e3d228d5d8ebf27e044438` | `a6379e7cecc05faa3cbf076013d745e327bbbaa38c0b9af22469d4701d18aabc` |
+| TSA 叶证书 | `8bfb0305bb64e2571ca507552ef3245cb1c2fee8728e0ff8689225081ea13467` | `32e841a95cc1164101ffde41298ef2fc75c1c4372ef095e88a6bbd47dfb191fc` |
+| CA CRL | `13d85acc0dd6a7ace445822b09dcba0de4236e84d60494dcbe6d7a6c97031935` | 不适用 |
+| 已过期旧 TSA 证书 | `aaeb619d11a63f75d06d104a926b85c76f8276bd9eae616e82d0db5cc5ff149d` | `4694be23c3a53004444b1705bfe5a7f50a6d2a1638194f23c0f389b68bd78a75` |
 
-当前 `delivery/timestamps.py::verify_reply` 能检查固定 CA、OpenSSL 验签、nonce/messageImprint、OID 和时间精度区间，但明确写 `revocation_status=NOT_CHECKED`；0011 的报告合同也不接受其他状态。下一步必须依据审核后的撤销策略补对应实现与协议，不能手填 CHECKED、只在文档声称已查，或将 NOT_CHECKED 当作生产放行。此批不在缺少真实链、CRL/OCSP 材料与策略时猜造另一套信任框架。
+叶证书有效期为 `2026-02-15T19:44:22Z` 至 `2040-02-02T19:44:22Z`，critical EKU 仅含 Time Stamping。其 certificatePolicies 为 `1.3.5.8`，**不能据此填入实际 token 的 TSTInfo policy**。CRL 编号 4096，thisUpdate 为 `2026-09-18T10:30:55Z`，nextUpdate 为 `2027-09-18T10:30:55Z`，未列出撤销条目。较远的 nextUpdate 不等于独立审核已经认可它的新鲜度。
+
+本会话离线执行 `openssl crl -in root_ca.crl -verify -CAfile ca.pem -noout` 成功；对下载的叶证书执行 `openssl verify -CAfile ca.pem -no-CApath -no-CAstore -auth_level 2 -purpose timestampsign -CRLfile root_ca.crl -crl_check_all tsa.crt` 返回 OK。这只验证这份**下载的叶证书**及给定链/CRL，不是对实际 RFC3161 token 签名者的验收，也没有取得生产时间证明。
+
+实取当前叶证书摘要与英文页/CPS 相同；德文页所列摘要恰好对应官方已过期旧证书，其有效期为 `2016-03-13T01:57:39Z` 至 `2026-03-11T01:57:39Z`。摘要差异已对上这两份不同证书，不据此推断网站被攻陷，也不能拿旧证书验证新 token。同一域名的下载和自签链验证不能替代独立 pin 来源。独立审核仍须确认根身份、实际签名链、认可的 token policy、精度依据、CRL 最大年龄及失败策略；保留材料与审核结论。
+
+### 严格离线 CRL 合同
+
+4575ddb 的旧报告固定为 `revocation_status=NOT_CHECKED`，却仍可能贡献生产 FORMAL 时间资格；本批前向 0020 修复这条资格路径。生产新 profile 恰为旧五键加 `revocation_policy="offline-full-chain-crl-v1"` 与显式整数 `max_crl_age_seconds`（1 至 31536000），没有默认生产最大年龄。不可为了让目前这份 CRL 通过而自行放宽年龄。旧五键 fixture 保留合成测试用途；旧非 fixture 报告保留原文，不能取得新生产资格。
+
+严格验证使用实际 token 的签名链与离线 CRL 全链核验，并使用 OpenSSL 的当前时间，不用 token genTime、数据库 verified_at 或导出包中的时间把时钟回拨。新 `fi.rfc3161-verification.v2` 报告只有检查成功才标 `GOOD`，保存 CRL 原字节 Base64、SHA256 及有效窗口；窗口为全部 CRL 的最大 thisUpdate 至各 nextUpdate、各 thisUpdate 加最大年龄的最小值。材料不全、过期、不匹配或撤销时拒绝，不能退回 NOT_CHECKED 放行。
+
+`verify-anchor` 的严格路径显式提供 `--crl`。原核验时刻必须在 CRL 窗内；派发门控还要求**当前**时刻在窗内。历史 score v3 根据实际 claim/dispatch 和原核验时间判断资格，不因材料后来正常到期改写旧评分。
+
+`verify-export` 默认取证明中留存的 CRL 字节，或显式 `--crl` 提供经审核的当前 bundle；均按复核时的当前时间重新验签，不回写原报告。登记证明的 CRL 窗还须覆盖已封存的 first_attempt_at：晚签发的新 CRL 即使通过当前链与撤销核验，也不能自动补历史资格。导出标记 `dispatch_admission=REQUIRES_ORIGINAL_DATABASE_AUDIT`，两份时间戳不能替代逐次派发账本核查。长期证据更新、OCSP、自动下载或撤销监控不在本批范围。
 
 保留一份**非 FORMAL**预检 query/reply 及验证材料，绑定当时实际生成的审计摘要。核验 nonce、messageImprint、token 内 policy、genTime/accuracy；页面泛称 UTC 来源不能替代量化误差。没有可信精度依据时继续阻断，不能为了通过填 missing_accuracy 或扩大允许精度。网站示例里的 -no_nonce、关闭 TLS 检查不采用。验证依据为 [RFC3161](https://datatracker.ietf.org/doc/html/rfc3161)；最终证据必须是实际 TSQ/TSR 与已审核信任材料，不是本地时间、网页截图或哈希本身。
 
@@ -47,7 +66,7 @@ CPS 公布 [根证书](https://freetsa.org/files/cacert.pem)、[TSA 证书](http
 
 前提：只读补证闭合、正常网络与 TSA 独立审核完成、相应实现已在独立副本验证、现有独立入场审查通过。目标仍为官方 Responses/gpt-6.1-terra，保留完整 v2 规则、prompt/schema/证据和显式请求合同；任何请求变化先按原约束处理，不挪用旧诊断结果或旧计数回执。
 
-当前已报告未知预留 $0.84；候选两次 FORMAL 各 $0.07，总额 $0.98，只有新完整输入计数、适用报价与全局未结账本支持才成立。当前报价于 2026-11-19 19:30 北京时间失效，不能在未来几周盲用；未获账单证据的旧预留不释放，$0.02 不是重试授权。
+当前已报告未知预留 $0.84，尚未承诺 $0.16；候选两次 FORMAL 各 $0.07，总额 $0.98，只有新完整输入计数、适用报价与全局未结账本支持才成立。2026-11-19 北京时间 09:09 核验时，冻结报价的 19:30 截止尚未到；这不是再次核价，也不表示未来 FORMAL 可通用。未获账单证据的旧预留不释放，$0.02 不是重试授权。CRL 补丁不改变生成请求，本批新增模型调用和费用均为 0。
 
 新建 FORMAL → 冻结登记/证据/入场 → 先取得及时 REGISTRATION 证明 → 指定二元一次调用、核对已保存输出/实际报告模型和参数/费用 → 指定五类别一次调用 → 全量封存 → 截止前取得及时 FORECAST 证明。参数 MISSING/INVALID/MISMATCH 时保留事实并停止推进，不仅看 output OK。任何不确定失败保留预算，不自动重发。
 

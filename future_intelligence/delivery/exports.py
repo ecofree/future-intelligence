@@ -2,16 +2,35 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from .batch import verify_pair, strict_json
-from .timestamps import TrustProfile, verify_reply, utc, VerificationError
+from .timestamps import CRLTrustProfile, MAX_PROOF, TrustProfile, verify_reply, utc, VerificationError
 from .evaluation import score
 from .manifest import validate_manifest
 
 
-def verify_export(data: dict, ca_pem: bytes, profile: TrustProfile) -> dict:
+def _retained_crl(anchor: dict) -> bytes:
+    # Claimed status, dates and identities are never an authority. Retained CRL
+    # bytes are only input to fresh signature, chain and validity checks.
+    claimed=anchor.get('claimed_verification')
+    if not isinstance(claimed,dict):raise VerificationError('missing retained CRL material')
+    encoded=claimed.get('crl_base64')
+    if not isinstance(encoded,str) or not 1<=len(encoded)<=4*((MAX_PROOF+2)//3):
+        raise VerificationError('invalid retained CRL size')
+    raw=base64.b64decode(encoded,validate=True)
+    if not 1<=len(raw)<=MAX_PROOF or hashlib.sha256(raw).hexdigest()!=claimed.get('crl_sha256'):
+        raise VerificationError('retained CRL digest mismatch')
+    return raw
+
+
+def verify_export(data: dict, ca_pem: bytes, profile: TrustProfile,
+                  *, crl_bundle: bytes | None = None) -> dict:
     if data.get('protocol') != 'fi.audit-export.v1':
         raise ValueError('unsupported export')
+    profile.validate()
+    if crl_bundle is not None and not isinstance(profile,CRLTrustProfile):
+        raise VerificationError('CRL input requires an explicit CRL trust profile')
     registration, forecast = data['registration'], data['forecast']
     r, f = verify_pair(registration, forecast)
     validate_manifest(r)
@@ -26,23 +45,33 @@ def verify_export(data: dict, ca_pem: bytes, profile: TrustProfile) -> dict:
         raise ValueError('experiment manifest has no frozen spec')
     deadline = spec['forecast_deadline']
     bundles = {registration['batch_id']:registration, forecast['batch_id']:forecast}
-    reports, upper = [], {}
+    reports, upper, checked = [], {}, {}
     for a in data['anchors']:
         if a['batch_id'] not in bundles:
             raise ValueError('foreign anchor')
         if a['protocol'] != 'RFC3161' or not a.get('reply_b64'):
             reports.append({'id':a['id'],'status':'NOT_A_VERIFIED_PRECISE_TIME_PROOF'});continue
         try:
+            material=crl_bundle
+            if isinstance(profile,CRLTrustProfile) and material is None:
+                material=_retained_crl(a)
             report=verify_reply(bundles[a['batch_id']]['subject_sha256'],base64.b64decode(a['query_b64']),
-                                base64.b64decode(a['reply_b64']),ca_pem,profile,deadline)
+                                base64.b64decode(a['reply_b64']),ca_pem,profile,deadline,crl_bundle=material)
             reports.append({'id':a['id'],**report})
             if report['status']=='VERIFIED':
                 time=utc(report['upper_time']); upper[a['batch_id']]=min(time,upper.get(a['batch_id'],time))
+                if report['revocation_status']=='GOOD':
+                    checked.setdefault(a['batch_id'],[]).append(report)
         except (ValueError,TypeError) as exc:
             reports.append({'id':a['id'],'status':'INVALID_PROOF','error_type':type(exc).__name__})
     has_time=len(upper)==2
     first_claim=f[0].get('first_attempt_at')
     preregistered=has_time and first_claim is not None and upper[registration['batch_id']]<=utc(first_claim)
+    revocation_checked=len(checked)==2
+    registration_checked=bool(first_claim is not None and any(
+        utc(p['upper_time'])<=utc(first_claim)
+        and utc(p['crl_valid_from'])<=utc(first_claim)<utc(p['crl_valid_until'])
+        for p in checked.get(registration['batch_id'],[])))
     outcomes={o['version_id']:o for o in data.get('outcomes',[])}
     if len(outcomes)!=len(data.get('outcomes',[])):
         raise ValueError('duplicate outcomes')
@@ -55,7 +84,10 @@ def verify_export(data: dict, ca_pem: bytes, profile: TrustProfile) -> dict:
         scored.append(result)
     return dict(integrity='VERIFIED_COMPLETE_TASK_SET',registered_tasks=len(f)-1,
                 precise_time_verified=bool(has_time),registration_precedes_first_attempt=bool(preregistered),
-                time_eligible_live=bool(preregistered and not profile.fixture and f[0]['run_kind']=='LIVE'),
+                time_eligible_live=bool(preregistered and revocation_checked and registration_checked
+                                        and not profile.fixture and f[0]['run_kind']=='LIVE'),
+                revocation_checked=revocation_checked,verification_policy='CURRENT_TIME_REVERIFICATION',
                 fixture=profile.fixture,anchors=reports,independent_recalculation=scored,
+                dispatch_admission='REQUIRES_ORIGINAL_DATABASE_AUDIT',
                 outcome_truth='REQUIRES_ORIGINAL_SOURCE_AND_BLIND_REVIEW',
                 provider_authenticity='TRUSTED_RUNNER_NOT_CRYPTOGRAPHICALLY_PROVED')

@@ -61,9 +61,9 @@ Sol 的两个实际覆盖为 `valid_terra_generation/native_entries_allowed`，�
 
 附件 `official_fetch.py` 的历史日志有自引用，快照 manifest 已注明后补构建；不能恢复当时未留存的每跳 TLS/URL/时间。重定向还缺官方主机白名单。`run_terra_diag.py` 的实际命令正确，但日志拼接重复 `--task`；仅日志缺陷，不能据此否认实际顺序。后续驱动应直接保存 `list(cmd)`，抓取器用独立 hop 对象和获准主机白名单；原文件及更正一起保留，不能改写旧附件。本仓库没有采用这两个私有附件驱动。
 
-生产 TSA 缺少经独立审核的实际根、链、签名用途、OID、精度和撤销证据。当前 verifier 明确输出 `revocation_status=NOT_CHECKED`，数据库报告合同也仅接受这个值，故现有“验签成功”不能声称完成生产撤销检查。FreeTSA 不同官方页面公布的 TSA 证书哈希还不一致，详见下一步说明；尚未取得证书原字节确认差异。没有 FORMAL、REGISTRATION/FORECAST 生产证明或自动结算。
+2026-11-18 审计时，verifier 明确输出 `revocation_status=NOT_CHECKED`，数据库报告合同也仅接受这个值，不能据此声称完成生产撤销检查。当天尚未取得证书原字节，FreeTSA 不同官方页面公布的 TSA 证书摘要也不一致。2026-11-19 的材料取得与前向修复另见第 6 节；生产根、链、policy、精度和撤销策略的独立批准仍未完成。没有 FORMAL、REGISTRATION/FORECAST 生产证明或自动结算。
 
-## 5. 本批修复与实际测试
+## 5. 0019 修复与实际测试（保留原批次记录）
 
 新增 [ADR-024](../docs/adr/024-provider-observation-metadata.md) 和前向 0019：仅显式官方 Terra 向前保存响应参数标签及两个 ID；历史 v1 不改。新 worker 在旧库缺 capability 时于 prepare 前停止，不能先付费再因存储协议不兼容丢记录。发送正文、模型、prompt、schema、输出成功语义、预算持有、SSRF/TLS 与 TSA 信任门槛不改。
 
@@ -76,3 +76,27 @@ Sol 的两个实际覆盖为 `valid_terra_generation/native_entries_allowed`，�
 **本批精确 HEAD 的 PG16/17、七条升级路径、实际服务器重启、打包矩阵与 205 行浏览器回归结果，以 [PR #12](https://github.com/ecofree/future-intelligence/pull/12) 最新 CI 区块和对应实际日志为准。** 没有重跑原库的实测/迁移。历史基线 9f0a994 的离线 358、PG16/17 各 206 项通过仅作比较。主分支保持不变，PR #12 不合并、不部署。
 
 首个提交 ed025f7 的 [数据库 CI 44301652282](https://github.com/ecofree/future-intelligence/actions/runs/44301652282) 在 PG16/17 各运行 220 项，13 项新观察协议回归及七条升级路径全部通过；唯一失败是历史 0018 边界测试调用当前 migrate 后仍断言只新增 0018，实际还会应用 0019。后续修复将该历史测试的资源明确限定为原 0018，保留原严格迁移列表与所有旧证明、旧评分、资格改变断言；当前全部迁移另由七条升级路径和 v1→v2 历史保留测试覆盖。未修改任何实现或 SQL，也不删除失败日志。修复后以新 HEAD 全套 CI 为验收依据。
+
+## 6. 2026-11-19 续报：CRL 材料与资格修复
+
+以 4575ddb 为起点，本批修复另一项实际缺陷：旧 NOT_CHECKED 报告仍可能取得生产 FORMAL 时间资格。新增 [ADR-025](../docs/adr/025-offline-crl-admission.md)、严格离线 CRL profile/report v2 和前向 0020；保留旧 fixture 的合成用途，旧非 fixture 报告继续保存但不能贡献新生产资格。新 `fi.score.v3` 不覆盖旧评分。模型请求、原诊断 `e1e67317-4416-445b-b5c5-2f0197bf251d` 及所有 UNKNOWN 预留不改，没有收费诊断重跑。
+
+本会话的研究下载通过继承环境代理的 HTTPS 取得官方 CA、TSA 叶证书及 CRL，HTTP 200、TLS 验证结果 0。原 CA/叶证书文件 SHA256 分别为 `2151b61137ffa86bf664691ba67e7da0b19f98c758e3d228d5d8ebf27e044438`、`8bfb0305bb64e2571ca507552ef3245cb1c2fee8728e0ff8689225081ea13467`；CRL SHA256 为 `13d85acc0dd6a7ace445822b09dcba0de4236e84d60494dcbe6d7a6c97031935`。文件摘要、DER 指纹、官方地址与完整边界见[第三关说明](../docs/FORMAL_EGRESS_TSA_REVIEW.md)。
+
+离线 `openssl crl -in root_ca.crl -verify -CAfile ca.pem -noout` 成功；`openssl verify` 使用固定 CA、禁用其他 CA 路径/存储、auth_level 2、timestampsign 用途和 `-crl_check_all`，对下载的叶证书返回 OK。叶证书 critical EKU 仅 Time Stamping；其 certificate policy `1.3.5.8` 不能当作实际 token policy。CRL 编号 4096，thisUpdate/nextUpdate 为 `2026-09-18T10:30:55Z` / `2027-09-18T10:30:55Z`，没有列出的撤销条目。尚未取得实际 token，因此不能宣称 RFC3161 token 验证或生产事前证明成功。
+
+新 profile 显式冻结 `offline-full-chain-crl-v1` 及最大 CRL 年龄，没有默认生产最大年龄。新报告绑定原 CRL 字节与有效窗口，验证实际 token 全链并使用当前时间，不回拨 genTime。派发要求当前仍在 CRL 窗内；历史 score v3 根据原真实 claim/dispatch、核验时刻和报告窗口判定，不因今天自然到期改写历史。独立导出按当前时间重验留存材料或显式给定的经审核 CRL；过期或后来签发、未覆盖原 first_attempt_at 的 CRL 不能自动提供历史资格。逐次派发仍需原数据库审计，本批没有长期归档更新或在线撤销监控。
+
+实取当前证书与英文页/CPS 摘要一致；另取得官方 `tsa.crt_expired`，其文件摘要正是德文页所列 `aaeb619d11a63f75d06d104a926b85c76f8276bd9eae616e82d0db5cc5ff149d`，有效期至 `2026-03-11T01:57:39Z`，已过期。摘要差异已对应到新旧证书，不能拿旧叶证书验证新 token，也不因此批准生产根。同域下载不能替代独立 pin 来源；CRL 新鲜度政策、实际 token policy/精度及独立生产信任仍未批准。
+
+本会话同日普通 DNS 对 api.openai.com、api.bls.gov、freetsa.org、www.bls.gov 均 EAI_AGAIN(-3)；研究下载经代理可达不表示项目直连 PublicHTTPS 已通过。原宿主 fake-IP 和第 1～3 节只读补证阻碍仍在，不以本会话成功下载替代原环境验收。
+
+当前已报告占用仍为 **$0.84 UNKNOWN**，尚未承诺 **$0.16**；未来两题 FORMAL 各 $0.07 的条件计划仍为 **$0.98**，$0.02 不是重试授权。北京时间 2026-11-19 09:09 核查时，报价 19:30 截止尚未到；未来正式登记仍须重新核价、冻结及计数。本次新增模型调用、模型费用均为 **0**，没有 FORMAL、生产时间证明或自动结算，主分支不变。
+
+本节的 0020/CRL 代码验收必须使用本批精确 HEAD 的离线、数据库升级与打包结果，不沿用第 5 节的 0019 测试数量。当前实际材料的两项 OpenSSL 离线检查已完成；正式信任验收继续阻断。
+
+本地 `python -m unittest discover -s tests -v` 实跑 **413 项通过**；新增 CRL 28、独立导出 10、CLI 3 项。`python -m compileall -q future_intelligence tests scripts` 与差分空白检查通过。原 20 份 SQL 与 4575ddb 逐字比对相同，模型请求相关文件无差异；原二元/四边界请求 SHA 回归均通过。新增 10 项数据库回归及第八条升级路径，检查非 fixture v1 去资格、真实 v2 全链材料、当前 claim/prepare、历史 score v3、未知预算保留和旧行/校验和；此环境没有 PostgreSQL 执行入口，待本提交自身 CI，不将静态检查写成数据库成功。
+
+`scripts/check_distribution.py` 的 source snapshot、wheel 和仓库外 `python -I ... installed` 检查通过：**61 个包文件 / 21 份迁移**逐项匹配。构建使用 `pip wheel --no-deps --no-build-isolation`，在独立临时 venv 从本地 wheel 安装；wheel SHA256 为 `71080c804a8a1e9748de33749a74eee4c591dd779dada2ace4a3c818d8b07bb8`。18 个变更文件的限定凭据模式检查无命中；原始实验附件、模型响应、私钥和实际数据库凭证均未加入公开仓库。本提交自己的 PostgreSQL、重启及浏览器结果以 PR #12 的本批 CI 区块为准。
+
+公开材料审计附件 `fi-tsa-public-review-20261119.zip` 包含四份原始公开材料、实际 OpenSSL 命令与输出、用途边界及 SHA256 清单，压缩包 SHA256 为 `cebbe4070117a11ad5db9b3c4cad30fa4fb5a8fae01f2a8a6162433764a8533f`。没有密钥、模型原始内容或私人实验附件；组包本地时间不是可信事前证明。

@@ -69,7 +69,8 @@ class DeliveryRepository:
     def receive(self, request_id, reply: bytes | None, error_code: str | None=None):
         self.one('SELECT fi.receive_anchor(%s::uuid,%s,%s)',(uid(request_id),reply,error_code))
 
-    def verify_anchor(self, request_id, ca_pem: bytes, trusted_profile: TrustProfile) -> dict:
+    def verify_anchor(self, request_id, ca_pem: bytes, trusted_profile: TrustProfile,
+                      *, crl_bundle: bytes | None = None) -> dict:
         from psycopg.types.json import Jsonb
         # Binary material is base64 only at the JSON transport boundary.
         data = self.one("""SELECT jsonb_build_object('query',encode(a.request_bytes,'base64'),
@@ -81,7 +82,7 @@ class DeliveryRepository:
         if external != data['profile']:
             raise ValueError('independent trust configuration disagrees with preregistration')
         result = verify_reply(data['subject'],base64.b64decode(data['query']),base64.b64decode(data['reply']),
-                              ca_pem,trusted_profile,data['deadline'])
+                              ca_pem,trusted_profile,data['deadline'],crl_bundle=crl_bundle)
         self.one('SELECT fi.attest_anchor(%s::uuid,%s)',(uid(request_id),Jsonb(result)))
         return result
 
