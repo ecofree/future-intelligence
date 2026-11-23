@@ -7,7 +7,7 @@ name = "future-intelligence"
 version = "2.0.1.dev1"
 description = "Auditable forecasting research system - integrated engineering preview"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["pywin32==312; sys_platform == 'win32'"]
 
 [tool.setuptools.packages.find]
 include = ["future_intelligence*"]

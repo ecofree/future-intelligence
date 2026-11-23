@@ -327,7 +327,8 @@ def verify_reply(subject_sha256: str, query: bytes, reply: bytes, ca_pem: bytes,
                 args.extend(['-attime', str(int(validation_time.timestamp()))])
         command(args)
         command(['openssl', 'ts', '-reply', '-in', str(paths['reply']), '-token_out', '-out', str(paths['token'])])
-        command(['openssl', 'cms', '-verify', '-inform', 'DER', '-in', str(paths['token']), '-noverify',
+        command(['openssl', 'cms', '-verify', '-binary', '-inform', 'DER', '-outform', 'DER',
+                 '-in', str(paths['token']), '-noverify',
                  '-out', str(paths['info'])])
         info = token_metadata(paths['info'].read_bytes(), profile)
     if info['imprint'] != subject_sha256 or info['nonce'] != nonces[0]:

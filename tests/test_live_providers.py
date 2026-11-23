@@ -164,7 +164,7 @@ class ProviderTests(unittest.TestCase):
             status=302
             def read1(self,n): return b''
             def getheader(self,n): return None
-        with patch('http.client.HTTPSConnection') as conn:
+        with patch('future_intelligence.providers.live.PublicHTTPS') as conn:
             conn.return_value.getresponse.return_value=Resp()
             w=HTTPSOnce().send('openai','fixture','{}','fixture-key',5)
             self.assertEqual(w.status,302); self.assertEqual(conn.call_count,1)
@@ -184,6 +184,8 @@ class FakeRepo:
                     'cap_microusd':1000000,'run_kind':'LIVE',
                     'lease_until':(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()}
     def claim(self,e,k): self.events.append('claim'); return self.lease
+    def claim_for_dispatch(self, experiment, task, count):
+        return self.claim(experiment, 'LIVE', task_id=task) if task is not None else self.claim(experiment, 'LIVE')
     def supports_observation_v2(self): return True
     def context(self,l): self.events.append('context'); return input_data()
     def prepare(self,l,b): self.events.append('prepare'); return self.marker

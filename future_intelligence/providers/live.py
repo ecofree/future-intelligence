@@ -21,6 +21,7 @@ import time
 from typing import Mapping
 
 from . import compatible
+from future_intelligence.public_https import NonPublicAddress, PublicHTTPS
 from future_intelligence.questions.spec import answer_contract
 
 PROMPT = (
@@ -317,7 +318,8 @@ class HTTPSOnce:
             headers.update({"x-api-key": key, "anthropic-version": "2023-06-01"})
         else:
             headers["x-goog-api-key"] = key
-        conn = http.client.HTTPSConnection(host, timeout=timeout, context=ssl.create_default_context())
+        connection_type = http.client.HTTPSConnection if provider == COMPATIBLE else PublicHTTPS
+        conn = connection_type(host, timeout=timeout, context=ssl.create_default_context())
         end = time.monotonic() + timeout
         try:
             conn.request("POST", path, body=body.encode(), headers=headers)
@@ -339,7 +341,7 @@ class HTTPSOnce:
                                 response.getheader("x-request-id") or response.getheader("request-id"))
         except (TimeoutError, socket.timeout):
             return WireResponse(None, b"", error_code="TIMEOUT")
-        except (OSError, http.client.HTTPException):
+        except (NonPublicAddress, OSError, http.client.HTTPException):
             return WireResponse(None, b"", error_code="TRANSPORT_ERROR")
         finally:
             conn.close()

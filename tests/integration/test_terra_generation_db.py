@@ -7,7 +7,8 @@ from unittest.mock import patch
 import psycopg
 import test_forecast_contract as fixture
 import test_forecast_contract_v2 as base
-from future_intelligence.providers.live import build_request, strict_json, terra_generation_profile
+from future_intelligence.providers.live import build_request, encode, strict_json, terra_generation_profile, WireResponse
+from test_input_count_worker import receipt_for_body
 from future_intelligence.delivery.repository import DeliveryRepository
 from future_intelligence.tasks.live_worker import run_once
 
@@ -80,24 +81,52 @@ class TerraGenerationDBTests(unittest.TestCase):
             self.call('operator','SELECT fi.configure_operation(%s,%s,%s,%s,%s)',
                       (e,'FORMAL',5,3600,'Synthetic invalid profile'))
 
-    def test_fixed_terra_synthetic_formal_retains_both_time_gates(self):
+    def admitted_terra(self):
         e,v,p=self.make(mode='FORMAL',edges=['3.0','3.5','4.0','4.5'])
         self.confirm(e,v,self.checks(e,v,p))
         operator=DeliveryRepository(self.dsns['operator'])
         reg=operator.capture(e,'REGISTRATION',base.previous.PLAN,self.profile_json);operator.seal(reg)
         with self.assertRaises(psycopg.errors.ObjectNotInPrerequisiteState):self.er['worker'].claim(e,'LIVE')
         self.anchor(reg)
+        task = self.admin('SELECT id FROM fi.expected_tasks WHERE experiment_id=%s',(e,))
+        config = self.admin('SELECT config FROM fi.experiment_entries WHERE experiment_id=%s',(e,))
+        ctx = self.admin('SELECT fi.live_input(%s)', (task,))
+        return e, operator, task, receipt_for_body(build_request(config, ctx).encode())
+
+    def test_fixed_terra_synthetic_formal_retains_both_time_gates(self):
+        e, operator, task, count = self.admitted_terra()
         class Transport:
             def send(self,provider,model,body,*args,**kwargs):
                 assert provider=='openai' and model=='gpt-6.1-terra'
                 assert strict_json(body)['reasoning']=={'effort':'medium','mode':'standard'}
-                return fixture.wire([200000]*5)
-        result=run_once(self.er['worker'],e,transport=Transport(),environ={'OPENAI_API_KEY':'synthetic'})
+                data = strict_json(fixture.wire([200000]*5).body)
+                data.update(model=model, reasoning={'effort':'medium','mode':'standard'}, service_tier='default')
+                return WireResponse(200, encode(data), 'req_synthetic_formal')
+        for target,record in [(None,None),(task,None),(task,{}),(task,{**count,'source_request_sha256':'a'*64})]:
+            result=run_once(self.er['worker'],e,Transport(),{},task_id=target,input_count_record=record)
+            self.assertEqual(result['status'],'BLOCKED')
+            self.assertEqual(self.admin('SELECT count(*) FROM fi.task_attempts WHERE task_id=%s',(task,)),0)
+            self.assertEqual(self.r['operator'].summary(e)['reserved_microusd'],0)
+        result=run_once(self.er['worker'],e,Transport(),{'OPENAI_API_KEY':'synthetic'},task_id=task,input_count_record=count)
         self.assertEqual(result['status'],'OK');self.assertIsNone(result['actual_cost'])
+        self.assertEqual(result['generation_contract_status'],'MATCH')
         self.assertEqual(self.admin('SELECT state FROM fi.budget_reservations WHERE attempt_id=%s',(result['attempt_id'],)),'HELD_UNKNOWN')
         forecast=operator.capture(e,'FORECAST',base.previous.PLAN,self.profile_json);operator.seal(forecast)
         self.anchor(forecast)
         with self.assertRaises(psycopg.Error):self.er['worker'].claim(e,'LIVE')
+
+    def test_formal_unconfirmed_response_stops_after_persisting_the_observation(self):
+        e, _, task, count = self.admitted_terra()
+        class Transport:
+            def send(self, *args, **kwargs):
+                return fixture.wire([200000]*5)
+        result = run_once(self.er['worker'], e, Transport(), {'OPENAI_API_KEY':'synthetic'},
+                          task_id=task, input_count_record=count)
+        self.assertEqual((result['status'], result['provider_status'], result['generation_contract_status']),
+                         ('BLOCKED', 'OK', 'MISMATCH'))
+        self.assertEqual(self.admin('SELECT probabilities_ppm FROM fi.task_submissions WHERE task_id=%s',(task,)),[200000]*5)
+        self.assertEqual(self.admin('SELECT state FROM fi.budget_reservations WHERE attempt_id=%s',
+                                    (result['attempt_id'],)), 'HELD_UNKNOWN')
 
     def test_helper_not_public_and_diagnostic_not_promoted(self):
         from psycopg.types.json import Jsonb

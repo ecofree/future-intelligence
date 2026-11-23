@@ -83,3 +83,13 @@ psql -X --set=ON_ERROR_STOP=1 --file=scripts/audit_terra_readonly.sql --output=t
 [BLS CPI 日历](https://www.bls.gov/schedule/news_release/cpi.htm) 与 [2026 年 12 月日历](https://www.bls.gov/schedule/2026/12_sched_list.htm) 本次复核仍为 2026-12-10 08:30 纽约时间，即北京时间 **21:30**。预测和时间证明误差上界必须严格早于该瞬间；结果发布时间包含该瞬间；结算截止 **2027-01-31 23:59:59 北京时间（含）**。正式登记前再次保存官方日历快照。
 
 目前没有 FORMAL ID 和生产证明，不安排自动结算。正式实验成立后才提供绑定实际 ID 的采集、独立裁决、评分命令和时间；没有定时能力就人工执行，不声称会自动等待。
+
+## 2026-11-23 候选环境与希腊 APED 核验
+
+`python -m future_intelligence.runtime check-egress` 使用与官方模型、BLS 和 TSA 相同的直连代码，在所有系统 DNS 答案均为公网单播地址后连接其中一个，核对 TCP peer，以原主机名验证 TLS。输出包括进程、网络命名空间、地址、SNI、证书摘要和逐域名结果。命令只握手，不读业务密钥。可以用 `--additional-tsa-host timestamp.aped.gov.gr` 增查候选 TSA。PR #12 的独立检查使用 Compose 的 `worker-openai` 服务和空供应商密钥，结果只适用于当次 runner。
+
+APED 的独立证书核验已完成以下部分。核对欧盟官方公报 C/2026/1944 第二枚清单签名证书的 SHA-256 后，验证欧盟清单的 XML 签名。从已签名的希腊指针取出授权签名证书，再验证 EETT 清单。两份签名均覆盖整个清单。希腊清单签发于 2026-08-25，下次更新为 2027-02-25，其中 APED Qualified Timestamping Issuing CA 的 TSA/QTST 状态为 granted，证书 DER SHA-256 为 `617df207c51979d14eb35e05afe7530c3002909cf1fd333f70ffc189df1bc662`。[欧盟官方公报](https://eur-lex.europa.eu/eli/C/2026/1944/oj/eng/pdf) · [欧盟清单](https://ec.europa.eu/tools/lotl/eu-lotl.xml) · [希腊监管机构清单](https://www.eett.gr/tsl/tl-el.xml)
+
+独立清单绑定的是时间戳签发 CA。用 APED 公布的根证书验过该 CA 的签名，根 DER 指纹为 `10b5f9c23b5a8da99e73b663147da71e4db1751272068833daf312ce686ac32f`。公开政策 v1.1 给出 HTTPS 服务入口、策略 OID `1.2.300.0.110001.2.1.2` 和 1 秒 UTC 最大偏差。§4.9.6 对订户证书和签发 CA 规定不同的 CRL 发布周期，每日和每年，发生撤销时另行更新 CA 清单。正式配置还需要绑定实际响应的签发链、覆盖全链的有效 CRL、项目接受的年龄上限及独立审核。FreeTSA 的历史记录继续使用其原始证据。 [APED 政策](https://pki.aped.gov.gr/repository/downloads/CP-CPS_APED_en_v1.1.pdf) · [APED 证书](https://pki.aped.gov.gr/repository/en/certs/production/)
+
+正式 Terra 的三个 worker 命令从数据库读取运行模式。缺少精确任务或有效完整计数时，领取事务回滚。响应输出有效但模型或生成参数未确认时，仍按 ADR-024 保存原始观察、概率和未知费用，命令返回阻断并停止本次运行。独立操作员仍需在另一条命令开始前复核前一题和跨库预算。直接 SQL 的评分合同沿用已有版本。

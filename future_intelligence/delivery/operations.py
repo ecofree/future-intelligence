@@ -8,30 +8,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 import hashlib
-import http.client
-import ipaddress
 import json
 import re
-import socket
 import ssl
 import time
 from urllib.parse import urlsplit
 
 from .batch import strict_json
 from .timestamps import utc
-
-
-class PublicHTTPS(http.client.HTTPSConnection):
-    def connect(self):
-        records=socket.getaddrinfo(self.host,self.port,type=socket.SOCK_STREAM)
-        addresses=sorted({item[4][0] for item in records})
-        if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
-            raise ValueError('nonpublic network address rejected')
-        raw=socket.create_connection((addresses[0],self.port),self.timeout)
-        try:
-            self.sock=self._context.wrap_socket(raw,server_hostname=self.host)
-        except BaseException:
-            raw.close();raise
+from future_intelligence.public_https import PublicHTTPS
 
 
 def bls_value(document: dict, series: str, year: int, period: str) -> str | None:

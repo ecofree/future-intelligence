@@ -4,6 +4,7 @@ from pathlib import Path
 import os
 import tempfile
 import unittest
+from secret_fixture import file_symlink, grant_test_access
 from future_intelligence.runtime.release import event_cluster,strict_document
 from future_intelligence.runtime.secrets import read_secret,inject
 from future_intelligence.runtime.service import alerts,operator_tick,loop
@@ -32,14 +33,14 @@ class RuntimeTests(unittest.TestCase):
         self.assertIsNone(read_secret('A',{},required=False))
     def test_private_file(self):
         with tempfile.TemporaryDirectory() as folder:
-            p=Path(folder)/'secret';p.write_text('test-value');p.chmod(0o600)
+            p=Path(folder)/'secret';p.write_text('test-value');grant_test_access(p)
             self.assertEqual(read_secret('A',{'A_FILE':str(p)}),'test-value')
-            p.chmod(0o644)
+            grant_test_access(p, public=True)
             with self.assertRaises(ValueError):read_secret('A',{'A_FILE':str(p)})
     def test_no_symlink_secret(self):
         with tempfile.TemporaryDirectory() as folder:
-            p=Path(folder)/'secret';p.write_text('test-value');p.chmod(0o600)
-            link=Path(folder)/'link';link.symlink_to(p)
+            p=Path(folder)/'secret';p.write_text('test-value');grant_test_access(p)
+            link=Path(folder)/'link';file_symlink(link, p)
             with self.assertRaises(OSError):read_secret('A',{'A_FILE':str(link)})
     def test_inject_only_allowed_names(self):
         self.assertEqual(inject(['A'],{'A':'x','B':'y'}),{'A':'x'})

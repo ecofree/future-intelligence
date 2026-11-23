@@ -33,6 +33,10 @@ class CountRepo(ExactRepo):
 
 def receipt(repo, *, status=200, value=None):
     body = build_request(repo.lease['entry'], repo.packet).encode('utf-8')
+    return receipt_for_body(body, status=status, value=value)
+
+
+def receipt_for_body(body, *, status=200, value=None):
     raw = encode({'object': 'response.input_tokens', 'input_tokens': 2345} if value is None else value)
     now = datetime.now(timezone.utc)
     return {

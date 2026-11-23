@@ -5,6 +5,11 @@ import subprocess
 import tempfile
 
 
+def config_path(path):
+    # OpenSSL treats backslashes and variable references in its config as escapes.
+    return '"' + path.as_posix().replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$') + '"'
+
+
 def run(*args):
     result = subprocess.run(list(args), capture_output=True, timeout=30)
     if result.returncode:
@@ -27,10 +32,10 @@ def fixture_tsa(directory: Path):
     config.write_text(f'''[tsa]
 default_tsa=fixture
 [fixture]
-serial={directory/'serial'}
-signer_cert={cert}
-certs={ca}
-signer_key={key}
+serial={config_path(directory/'serial')}
+signer_cert={config_path(cert)}
+certs={config_path(ca)}
+signer_key={config_path(key)}
 signer_digest=sha256
 default_policy=1.3.6.1.4.1.55555.1
 digests=sha256
@@ -69,12 +74,12 @@ def fixture_crl(directory: Path, *, issuer='ca', certificates=(), revoked=(),
         config.write_text(f'''[ca]
 default_ca=fixture
 [fixture]
-database={work/'index'}
-serial={work/'serial'}
-crlnumber={work/'crlnumber'}
-new_certs_dir={work}
-certificate={directory/(issuer+'.pem')}
-private_key={directory/(issuer+'.key')}
+database={config_path(work/'index')}
+serial={config_path(work/'serial')}
+crlnumber={config_path(work/'crlnumber')}
+new_certs_dir={config_path(work)}
+certificate={config_path(directory/(issuer+'.pem'))}
+private_key={config_path(directory/(issuer+'.key'))}
 default_md=sha256
 default_days=2
 default_crl_days=1
@@ -119,5 +124,6 @@ def fixture_intermediate_tsa(directory: Path):
         '-extfile', str(directory/'ext.cnf'))
     chain = directory/'chain.pem'
     chain.write_bytes((directory/'intermediate.pem').read_bytes() + ca)
-    config.write_text(config.read_text().replace(f'certs={directory/"ca.pem"}\n', f'certs={chain}\n'))
+    config.write_text(config.read_text().replace(f'certs={config_path(directory/"ca.pem")}\n',
+                                                f'certs={config_path(chain)}\n'))
     return ca, config

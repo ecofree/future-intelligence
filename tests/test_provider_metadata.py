@@ -225,7 +225,7 @@ class ProviderMetadataWorkerTests(unittest.TestCase):
             repo = MetadataRepo(); wire = RecordingWire(response())
             if capability == 'absent':
                 runner_repo = SimpleNamespace(**{name: getattr(repo,name) for name in
-                    ('claim','context','prepare','observe','succeed','fail')})
+                    ('claim_for_dispatch','context','prepare','observe','succeed','fail')})
             else:
                 runner_repo = repo
                 repo.supports_observation_v2 = Mock(return_value=capability)

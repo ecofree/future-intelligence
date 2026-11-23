@@ -61,7 +61,10 @@ def run_once(repo, experiment: str, transport=None, environ=None, *, task_id: st
     target = uuid_text(task_id) if task_id is not None else None
     if input_count_record is not None and target is None:
         return {'status': 'BLOCKED', 'reason': 'INPUT_COUNT_REQUIRES_EXACT_TASK'}
-    lease = repo.claim(experiment, 'LIVE', task_id=target) if target is not None else repo.claim(experiment, 'LIVE')
+    try:
+        lease = repo.claim_for_dispatch(experiment, target, input_count_record)
+    except Blocked as exc:
+        return {'status': 'BLOCKED', 'reason': str(exc)}
     if lease is None:
         if target is not None:
             return {'status': 'BLOCKED', 'reason': 'TARGET_TASK_NOT_CLAIMABLE',
@@ -140,6 +143,8 @@ def run_once(repo, experiment: str, transport=None, environ=None, *, task_id: st
     if capture_generation:
         result.update({name: obs[name] for name in ('request_id', 'response_id', 'model_reported', 'generation_reported')})
         result['generation_contract_status'] = _generation_contract_status(entry, obs)
+        if lease.get('formal_terra') and (obs['status'] != 'OK' or result['generation_contract_status'] != 'MATCH'):
+            result.update(status='BLOCKED', provider_status=obs['status'], reason='FORMAL_TERRA_RESULT_REQUIRES_REVIEW')
     return result
 
 

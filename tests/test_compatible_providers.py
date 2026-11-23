@@ -259,6 +259,8 @@ class FakeRepo:
         self.lease={'task_id':'t','attempt_id':'a','fence':1,'entry':e,'cap_microusd':1000000,'run_kind':'LIVE',
                     'lease_until':(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()}
     def claim(self,e,k): self.events.append('claim'); return self.lease
+    def claim_for_dispatch(self, experiment, task, count):
+        return self.claim(experiment, 'LIVE')
     def context(self,l): return input_data()
     def prepare(self,l,b): self.body=b; return True
     def observe(self,l,o): self.obs=o
