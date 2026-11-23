@@ -14,6 +14,8 @@ APED 的生产策略已固定到新库。欧盟与希腊两份清单的签名、
 
 Windows 上 `python -m unittest discover -s tests -v` 发现 425 项，422 项通过，3 项跳过。系列费用和 Terra 准入的 10 项 PostgreSQL 专项测试全部通过。完整集成测试首次发现一条新增的正向测试漏做既有入场审查；补齐测试前置材料后，正确配置可以登记，替换现场信任配置的尝试仍被拒绝。
 
+在干净的 Windows PostgreSQL 17.12 数据库重跑 `python -m unittest discover -s tests/integration -v`，236 项全部通过。提交 `b5bb469` 的 Linux PostgreSQL 16、17 和部署检查通过。随后在独立供应商用量导出中匹配了一组历史诊断的日期、模型、两次调用及输入输出总数。按密钥汇总的官方费用与原始 CSV 摘要登记在私有费用库。第二次冷恢复逐一核对 1,971 个文件，历史费用凭证、开账占用和站点绑定复验通过。 [数据库验收](https://github.com/ecofree/future-intelligence/actions/runs/45175408895) · [部署验收](https://github.com/ecofree/future-intelligence/actions/runs/45175408878)
+
 ## 当前整合
 
 2026-11-23 在隔离 Windows 工作副本以 Python 3.11.15、Git OpenSSL 3.5.4 运行 `python -m unittest discover -s tests -v`，发现 420 项，417 项通过。两个文件符号链接用例受当前账户权限限制，另一个用例需要 POSIX FIFO。实际 NTFS ACL、含换行和控制字节的时戳印记、CRL 与证书链均有通过的回归。模型请求正文固定摘要回归通过。Windows 的 `runtime check-egress` 将四个 `198.18.*` 响应全部拒绝，退出码为 2。本次未领取历史任务，新增模型调用与费用为零，尚无正式实验 ID。独立清单、时间精度和候选 worker 复测入口见[出网与 TSA 核验](../docs/FORMAL_EGRESS_TSA_REVIEW.md)。
