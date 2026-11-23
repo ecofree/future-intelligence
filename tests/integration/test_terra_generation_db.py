@@ -155,7 +155,8 @@ class TerraGenerationDBTests(unittest.TestCase):
     def test_site_verifier_profile_cannot_be_changed_by_experiment(self):
         self.open_test_ledger()
         self.record_test_cutover()
-        e,_,_=self.make(mode='FORMAL')
+        e,version,permission=self.make(mode='FORMAL')
+        self.confirm(e,version,self.checks(e,version,permission))
         operator=DeliveryRepository(self.dsns['operator'])
         other={**self.profile_json,'max_crl_age_seconds':1800}
         with self.assertRaisesRegex(psycopg.Error,'SERIES_TRUST_PROFILE_MISMATCH'):

@@ -10,6 +10,10 @@
 
 APED 的生产策略已固定到新库。欧盟与希腊两份清单的签名、服务状态和签发 CA 已离线复核；真实公开提交回执通过新验证器，签名给出一秒误差，两层撤销状态均通过。本次 CRL 窗口止于 2026-11-23 21:59:44 UTC。实际安装的 Windows worker 通过系统解析器得到五个 198.18/15 地址，公网检查退出 2。供应商账户的切换记录、正式密钥和新批次的正式入场材料仍待取得。 [费用和信任规则](../docs/adr/026-series-budget-and-aped-trust.md)
 
+在同一台持久主机的独立 QA 库封存了一份公开合成登记批次，并先用数据库保存原始 TSQ。授权的候选 worker 将该查询送到 APED。真实 TSR 的签发时间为 2026-11-23 12:28:56 UTC，误差上界为 12:28:57 UTC。持久环境的操作员接收原始回执，隔离的验证角色用安装的 wheel 执行 `DeliveryRepository.verify_anchor`，数据库确认守时资格。该库的 run_kind 为 FIXTURE，任务尝试和模型请求均为零。费用主库没有正式登记。 [实际 APED 请求](https://github.com/ecofree/future-intelligence/actions/runs/45174650105)
+
+Windows 上 `python -m unittest discover -s tests -v` 发现 425 项，422 项通过，3 项跳过。系列费用和 Terra 准入的 10 项 PostgreSQL 专项测试全部通过。完整集成测试首次发现一条新增的正向测试漏做既有入场审查；补齐测试前置材料后，正确配置可以登记，替换现场信任配置的尝试仍被拒绝。
+
 ## 当前整合
 
 2026-11-23 在隔离 Windows 工作副本以 Python 3.11.15、Git OpenSSL 3.5.4 运行 `python -m unittest discover -s tests -v`，发现 420 项，417 项通过。两个文件符号链接用例受当前账户权限限制，另一个用例需要 POSIX FIFO。实际 NTFS ACL、含换行和控制字节的时戳印记、CRL 与证书链均有通过的回归。模型请求正文固定摘要回归通过。Windows 的 `runtime check-egress` 将四个 `198.18.*` 响应全部拒绝，退出码为 2。本次未领取历史任务，新增模型调用与费用为零，尚无正式实验 ID。独立清单、时间精度和候选 worker 复测入口见[出网与 TSA 核验](../docs/FORMAL_EGRESS_TSA_REVIEW.md)。
