@@ -1,10 +1,14 @@
 import hashlib
+import json
+from pathlib import Path
 import socket
 import ssl
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
 from future_intelligence.public_https import NonPublicAddress, PILOT_HOSTS, PublicHTTPS, probe_egress
+from deploy import probe_public_tsa
 
 
 def record(ip):
@@ -76,3 +80,27 @@ class PublicHTTPSTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     probe_egress(value)
                 dns.assert_not_called()
+
+    def test_public_tsa_sample_requires_verified_egress(self):
+        with tempfile.TemporaryDirectory() as work, patch.object(probe_public_tsa, 'probe_egress',
+                return_value={'tls_passed': False}), patch.object(probe_public_tsa, 'request_reply') as send:
+            directory = Path(work) / 'review'
+            self.assertFalse(probe_public_tsa.sample(directory, 'a' * 40))
+            send.assert_not_called()
+            self.assertFalse((directory / 'request.tsq').exists())
+
+    def test_public_tsa_sample_persists_exact_bytes_and_refuses_replay(self):
+        with tempfile.TemporaryDirectory() as work, patch.object(probe_public_tsa, 'probe_egress',
+                return_value={'tls_passed': True}), patch.object(probe_public_tsa, 'make_query',
+                return_value=b'synthetic-query') as make, patch.object(probe_public_tsa, 'request_reply',
+                return_value=b'synthetic-reply') as send:
+            directory = Path(work) / 'review'
+            self.assertTrue(probe_public_tsa.sample(directory, 'a' * 40))
+            make.assert_called_once_with(hashlib.sha256((directory / 'subject.txt').read_bytes()).hexdigest())
+            send.assert_called_once_with('https://timestamp.aped.gov.gr/qtss', b'synthetic-query',
+                                         allowed_host='timestamp.aped.gov.gr')
+            self.assertEqual((directory / 'reply.tsr').read_bytes(), b'synthetic-reply')
+            self.assertFalse(json.loads((directory / 'receipt.json').read_text())['production_acceptance'])
+            with self.assertRaises(FileExistsError):
+                probe_public_tsa.sample(directory, 'a' * 40)
+            self.assertEqual(send.call_count, 1)

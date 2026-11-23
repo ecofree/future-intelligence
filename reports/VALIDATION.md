@@ -8,6 +8,10 @@
 
 本机独立 PostgreSQL 17.12 在 Windows 兼容性修复后的基线运行通过 231 项集成测试，含 8 条升级路径。在正式 Terra worker 加入计数与响应门控后，`test_terra_generation_db` 的 7 项再测通过。测试使用临时数据库、模拟模型响应与测试 CA，缺少或错绑计数时实际 attempt 和预算预留均为零。数据库保存有效概率和未知费用后，模型不匹配会得到阻断结果。
 
+`2000cb6` 的完整本机 PostgreSQL 17.12 回归通过 232 项。GitHub 的 PostgreSQL 16 和 17 各通过 232 项，三个 Python 版本各通过 420 项，独立安装逐文件核对 62 个包文件及 21 份 SQL。Chromium 的 205 行分页、备份恢复与重启检查通过。候选 worker 的同一次普通解析与 TLS 1.3 握手覆盖 OpenAI、两个 BLS 域名、FreeTSA 和 APED 五个域名，记录了公网 peer、SNI 和证书指纹。该运行使用临时数据库或空供应商密钥，未取得原实验库的唯一写入权。[候选 worker 原始作业](https://github.com/ecofree/future-intelligence/actions/runs/45165644834/job/137661771700) · [数据库回归](https://github.com/ecofree/future-intelligence/actions/runs/45165644670) · [离线回归](https://github.com/ecofree/future-intelligence/actions/runs/45165644696) · [安装包](https://github.com/ecofree/future-intelligence/actions/runs/45165644591)
+
+随后为 APED 的一次性样本增加手动入口。Windows 离线回归发现 422 项，419 项通过，3 项因平台或账户权限跳过。新增两项覆盖公网检查失败时零请求、一次请求后保留原字节以及禁止覆盖已有取样目录。任务附带回执用本地接收证书加密，公开日志只记录摘要和传输状态。
+
 **2026-11-19 现场交接续报：只读审计与独立副本升级已执行，普通出网与 TSA 独立审核仍阻断。** 新包 `29a834bb…fa86c` 的 ZIP 与 13 项清单逐项匹配；21 份迁移 SHA/字节数、旧 19 条迁移记录和可比较业务/预算摘要与 41daeea、9f0a994 交叉一致。原环境日志记录离线 413、集成 231 项通过；本会话没有重跑原库测试。完整目录/角色成员闭包、未附原文和缺少共同字段的源库全量前后指纹不扩大为已独立复算，详见 [正式入场交接复核](FORMAL_ADMISSION_HANDOFF_AUDIT.md)。
 
 发现原文字报告将实验 manifest `c0a4a6bc…` 与证据封存 manifest `75ec6d15…` 混为同值；JSON 和旧包复算可区分，本批追加更正，不改原包或实验。7f 前置实验截至审计零领取/派发/预留，但两个任务仍 QUEUED；旧未知占用 **$0.84** 保留。恢复执行继续指定新实验/任务。当前外部工作仅为授权管理层恢复正常出网及完成有依据的 TSA 信任/量化精度/CRL 策略审核；不新增控制器、迁移或收费调用。FORMAL、正式时间证明和自动结算均未创建。
