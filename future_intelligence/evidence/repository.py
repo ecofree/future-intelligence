@@ -6,10 +6,10 @@ from future_intelligence.tasks.repository import TaskRepository, uuid_text
 
 
 class EvidenceRepository(TaskRepository):
-    def claim_for_dispatch(self, experiment, task_id, count_record):
+    def claim_for_dispatch(self, experiment, task_id, count_record, *, environ=None):
         """Roll back the tentative formal claim and reservation on a bad count."""
         from future_intelligence.providers.input_count import validate_count_record
-        from future_intelligence.providers.live import Blocked, build_request
+        from future_intelligence.providers.live import Blocked, build_request, credentials_for, validate_entry
         with self._transaction() as connection:
             lease = connection.execute(*self._claim_query(experiment, 'LIVE', task_id)).fetchone()[0]
             if lease is None:
@@ -24,6 +24,8 @@ class EvidenceRepository(TaskRepository):
             if gate['mode'] == 'FORMAL':
                 if task_id is None or count_record is None:
                     raise Blocked('FORMAL_TERRA_REQUIRES_EXACT_TASK_AND_COUNT')
+                validate_entry(entry, lease['cap_microusd'])
+                credentials_for(entry, environ)
                 context = connection.execute('SELECT fi.live_context(%s::uuid,%s::uuid,%s)',
                                              self._identity(lease)).fetchone()[0]
                 body = build_request(lease['entry'], context)

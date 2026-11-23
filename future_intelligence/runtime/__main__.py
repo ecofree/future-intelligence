@@ -29,9 +29,14 @@ def main(argv=None):
             c.add_argument('--task',type=UUID,help='Claim exactly one task; requires --cycles 1.')
             c.add_argument('--input-count-record',type=Path,help='Validate a matching input-count receipt before sending; requires --task.')
     c=sub.add_parser('serve');c.add_argument('--container-bind',action='store_true')
+    sub.add_parser('series-status',help='Read the replacement-site fee ledger as operator.')
     c=sub.add_parser('check-egress', help='Check ordinary DNS and TLS for the four pilot hosts.')
     c.add_argument('--additional-tsa-host', help='Also test TLS to this candidate on port 443.')
     args=p.parse_args(argv)
+    if args.command=='series-status':
+        from future_intelligence.delivery.repository import DeliveryRepository
+        repository=DeliveryRepository(read_secret('FI_OPERATOR_DATABASE_URL'))
+        return repository.one('SELECT (SELECT to_jsonb(s) FROM fi.series_budget_status s)') or {'status':'NOT_ENROLLED'}
     if args.command == 'check-egress':
         from future_intelligence.public_https import probe_egress
         report = probe_egress(args.additional_tsa_host)

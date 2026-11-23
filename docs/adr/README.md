@@ -31,5 +31,6 @@
 - [ADR-020 配置驱动的 OpenAI 兼容供应商](020-openai-compatible-providers.md)
 - [ADR-021 官方 Terra 的显式生成合同](021-official-terra-generation.md)
 - [ADR-022 2026 年 11 月 CPI 首发结算合同](022-cpi-first-release.md)
+- [ADR-026 替代站点的费用账本和 APED 时间证明](026-series-budget-and-aped-trust.md)
 
 各实现的真实测试、残余风险和外部依赖，以[验收索引](../../reports/VALIDATION.md)和Issue #5/#7为准。

@@ -52,7 +52,7 @@ class IntegratedMigrationPathsTests(unittest.TestCase):
         migration=importlib.import_module('future_intelligence.db.migrate')
         all_files={p.name:p.read_bytes() for p in files('future_intelligence.db').joinpath('migrations').iterdir()
                    if p.name.endswith('.sql')}
-        self.assertEqual(len(all_files),21)
+        self.assertEqual(len(all_files),24)
         with self.database() as reference,self.database() as upgraded,tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(migration.migrate(reference),sorted(all_files))
             selected=[n for n in all_files if n[:4]<'0014']
@@ -63,12 +63,13 @@ class IntegratedMigrationPathsTests(unittest.TestCase):
             elif kind=='exact18':selected=[n for n in all_files if n[:4]<'0018']
             elif kind=='canonical19':selected=[n for n in all_files if n[:4]<'0019']
             elif kind=='observed20':selected=[n for n in all_files if n[:4]<'0020']
+            elif kind=='crl21':selected=[n for n in all_files if n[:4]<'0021']
             root=Path(tmp);target=root/'migrations';target.mkdir()
             for name in selected:(target/name).write_bytes(all_files[name])
             with patch.object(migration,'files',return_value=root):
                 self.assertEqual(migration.migrate(upgraded),sorted(selected))
             from future_intelligence.evidence.repository import EvidenceRepository
-            self.assertEqual(EvidenceRepository(upgraded).supports_observation_v2(),kind=='observed20')
+            self.assertEqual(EvidenceRepository(upgraded).supports_observation_v2(),kind in ('observed20','crl21'))
             with psycopg.connect(upgraded) as c:
                 sid=c.execute('SELECT fi.register_source(%s,%s)',
                     ('SYNTHETIC PATH SENTINEL','https://example.invalid/sentinel')).fetchone()[0]
@@ -95,3 +96,4 @@ class IntegratedMigrationPathsTests(unittest.TestCase):
     def test_exact18_to_current21(self):self.check_path('exact18')
     def test_canonical19_to_current21(self):self.check_path('canonical19')
     def test_observed20_to_current21(self):self.check_path('observed20')
+    def test_crl21_to_current(self):self.check_path('crl21')

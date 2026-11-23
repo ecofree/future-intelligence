@@ -8,6 +8,10 @@ on:
         description: 'Public PEM certificate to encrypt the one-time, non-experimental APED review'
         type: string
         required: true
+      public_fixture_query:
+        description: 'Optional SHA-256 timestamp query in hex for a public synthetic QA registration'
+        type: string
+        required: false
 permissions:
   contents: read
 jobs:
@@ -30,10 +34,11 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
             docker compose -f deploy/compose.yaml run --rm -T --no-deps worker-openai python -m future_intelligence.runtime check-egress --additional-tsa-host timestamp.aped.gov.gr
           fi
-      - name: Request one timestamp for the public revision and encrypt the exchange
+      - name: Request one public test timestamp and encrypt the exchange
         if: github.event_name == 'workflow_dispatch'
         env:
           RECIPIENT_CERTIFICATE: ${{ inputs.recipient_certificate }}
+          PUBLIC_FIXTURE_QUERY: ${{ inputs.public_fixture_query }}
         run: |
           set -euo pipefail
           umask 077
@@ -45,7 +50,7 @@ jobs:
           # Check encryption before issuing the single request.
           openssl cms -encrypt -binary -aes256 -in /dev/null -out /dev/null -outform DER "$RUNNER_TEMP/recipient.pem"
           code=0
-          docker compose -f deploy/compose.yaml run --rm -T --no-deps -v "$review:/review" -e PUBLIC_REVISION="$GITHUB_SHA" worker-openai python - < deploy/probe_public_tsa.py || code=$?
+          docker compose -f deploy/compose.yaml run --rm -T --no-deps -v "$review:/review" -e PUBLIC_REVISION="$GITHUB_SHA" -e PUBLIC_FIXTURE_QUERY worker-openai python - < deploy/probe_public_tsa.py || code=$?
           tar -C "$review" -cf - sample | openssl cms -encrypt -binary -aes256 -out "$RUNNER_TEMP/tsa-review.p7m" -outform DER "$RUNNER_TEMP/recipient.pem"
           exit "$code"
       - name: Retain only the encrypted review

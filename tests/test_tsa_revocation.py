@@ -3,13 +3,15 @@ import base64
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from future_intelligence.delivery.timestamps import (
     CRL_POLICY, CRLTrustProfile, MAX_PROOF_BYTES, TrustProfile, VerificationError,
-    _crl_time, _crl_times, make_query, trust_profile_from_dict, verify_reply,
+    _aped_window, _crl_time, _crl_times, make_query, trust_profile_from_dict, verify_reply,
 )
 from tsa_fixture import fixture_crl, fixture_intermediate_tsa, fixture_tsa, timestamp
 
@@ -46,6 +48,14 @@ def pem_crl(value):
 class TrustProfileTests(unittest.TestCase):
     def setUp(self):
         self.old = TrustProfile('a' * 64, ('1.2.3',), fixture=True)
+
+    def test_deployed_aped_profile_is_fixed(self):
+        value = json.loads((Path(__file__).resolve().parents[1]/'deploy'/'aped-trust-profile.json').read_text())
+        trust_profile_from_dict(value)
+        for key, replacement in [('fixture',True),('ca_sha256','a'*64),('max_accuracy_us',2000000),
+                                 ('missing_accuracy_us',1000000),('policy_oids',['1.2.3']),('max_crl_age_seconds',86400)]:
+            with self.subTest(key=key), self.assertRaises(VerificationError):
+                trust_profile_from_dict({**value,key:replacement})
 
     def test_v1_dictionary_shape_is_unchanged(self):
         self.assertEqual(set(self.old.__dict__),
@@ -278,6 +288,27 @@ class IntermediateRevocationTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.tmp.cleanup()
+
+    def test_aped_rechecks_both_issuers_with_different_expiry_windows(self):
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes
+        now = datetime.now(UTC).replace(microsecond=0)
+        issuer = (self.directory/'intermediate.pem').read_bytes()
+        signer = (self.directory/'tsa.pem').read_bytes()
+        fp = x509.load_pem_x509_certificate(issuer).fingerprint(hashes.SHA256()).hex()
+        root_crl = fixture_crl(self.directory,last_update=now-timedelta(days=90),next_update=now+timedelta(days=3))
+        def daily(hours):
+            return fixture_crl(self.directory,issuer='intermediate',last_update=now-timedelta(hours=hours),
+                               next_update=now+timedelta(days=2))
+        fresh, stale = daily(23), daily(25)
+        with self.assertRaises(VerificationError):
+            _aped_window(self.ca,issuer,signer,root_crl+fresh,now)
+        with patch('future_intelligence.delivery.timestamps.APED_ISSUER_DER_SHA256',fp), \
+             patch('future_intelligence.delivery.timestamps.APED_REVIEW_UNTIL',now+timedelta(days=10)):
+            self.assertEqual(_aped_window(self.ca,issuer,signer,root_crl+fresh,now)[1],now+timedelta(hours=1))
+            for bundle in (root_crl+stale, root_crl+root_crl, fresh+fresh, root_crl+fresh+fresh):
+                with self.assertRaises(VerificationError):
+                    _aped_window(self.ca,issuer,signer,bundle,now)
 
     def verify(self, bundle):
         return verify_reply('b' * 64, self.query, self.reply, self.ca, self.profile,

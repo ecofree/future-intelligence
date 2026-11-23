@@ -27,6 +27,12 @@ MAX_PROOF = 2_000_000
 MAX_PROOF_BYTES = MAX_PROOF
 SHA256_OID = bytes.fromhex('608648016503040201')
 CRL_POLICY = 'offline-full-chain-crl-v1'
+APED_POLICY = 'aped-qualified-full-chain-crl-v1'
+APED_ROOT_PEM_SHA256 = 'b61518c2cd07d72cb7591a7537ac7f36901b8d343db9889e19f6977f5729e5d9'
+APED_ISSUER_DER_SHA256 = '617df207c51979d14eb35e05afe7530c3002909cf1fd333f70ffc189df1bc662'
+APED_OID = '1.2.300.0.110001.2.1.2'
+# Earliest nextUpdate in the two independently signed EU/Greek trust lists.
+APED_REVIEW_UNTIL = datetime(2027, 2, 25, 7, tzinfo=UTC)
 _TRUST_FIELDS = frozenset(('ca_sha256', 'policy_oids', 'max_accuracy_us', 'missing_accuracy_us', 'fixture'))
 _CRL_TRUST_FIELDS = _TRUST_FIELDS | {'revocation_policy', 'max_crl_age_seconds'}
 _CRL_PEM = re.compile(
@@ -146,9 +152,15 @@ class CRLTrustProfile(TrustProfile):
 
     def validate(self) -> None:
         super().validate()
-        if self.revocation_policy != CRL_POLICY or type(self.max_crl_age_seconds) is not int \
+        if self.revocation_policy not in (CRL_POLICY, APED_POLICY) or type(self.max_crl_age_seconds) is not int \
                 or not 1 <= self.max_crl_age_seconds <= 31_536_000:
             raise VerificationError('invalid offline CRL policy')
+        if self.revocation_policy == APED_POLICY and (
+            self.ca_sha256 != APED_ROOT_PEM_SHA256 or self.policy_oids != (APED_OID,)
+            or self.max_accuracy_us != 1_000_000 or self.missing_accuracy_us is not None
+            or self.fixture or self.max_crl_age_seconds != 31_536_000
+        ):
+            raise VerificationError('APED profile differs from reviewed public trust material')
 
 
 def trust_profile_from_dict(value: dict) -> TrustProfile:
@@ -241,6 +253,48 @@ def _crl_window(bundle: bytes, max_age_seconds: int, now: datetime) -> tuple[dat
     return max(start for start, _ in windows), min(end for _, end in windows)
 
 
+def _aped_window(root_pem: bytes, certificates: bytes, signer_pem: bytes, bundle: bytes,
+                 now: datetime) -> tuple[datetime, datetime]:
+    from cryptography import x509
+    from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
+    from cryptography.hazmat.primitives import hashes
+
+    try:
+        root = x509.load_pem_x509_certificate(root_pem)
+        signers = x509.load_pem_x509_certificates(signer_pem)
+        issuers = [cert for cert in x509.load_pem_x509_certificates(certificates)
+                   if cert.fingerprint(hashes.SHA256()).hex() == APED_ISSUER_DER_SHA256]
+        if len(signers) != 1 or len(issuers) != 1:
+            raise VerificationError('APED requires one signer and the listed issuing CA')
+        signer, issuer = signers[0], issuers[0]
+        signer.verify_directly_issued_by(issuer)
+        issuer.verify_directly_issued_by(root)
+        # The strictly parsed CRL-only bundle has already passed OpenSSL full-chain checking.
+        crls = [x509.load_pem_x509_crl(match.group()) for match in _CRL_PEM.finditer(bundle)]
+        if len(crls) != 2:
+            raise VerificationError('APED requires exactly two distinct issuer CRLs')
+        starts, ends = [], [APED_REVIEW_UNTIL]
+        for ca, child, age in ((issuer, signer, 86400), (root, issuer, 31536000)):
+            matches = [crl for crl in crls if crl.issuer == ca.subject]
+            if len(matches) != 1:
+                raise VerificationError('APED CRL issuer set differs from the pinned chain')
+            crl = matches[0]
+            if (not crl.is_signature_valid(ca.public_key()) or crl.next_update_utc is None
+                    or crl.get_revoked_certificate_by_serial_number(child.serial_number) is not None):
+                raise VerificationError('APED certificate revocation check failed')
+            starts.append(crl.last_update_utc)
+            ends.extend((crl.next_update_utc, crl.last_update_utc + timedelta(seconds=age),
+                         child.not_valid_after_utc, ca.not_valid_after_utc))
+        start, end = max(starts), min(ends)
+        if not start <= now < end:
+            raise VerificationError('APED issuer-specific freshness or trust review expired')
+        return start, end
+    except (ValueError, TypeError, InvalidSignature, UnsupportedAlgorithm) as exc:
+        if isinstance(exc, VerificationError):
+            raise
+        raise VerificationError('invalid APED signer, issuer or revocation material') from exc
+
+
 def make_query(subject_sha256: str) -> bytes:
     digest(subject_sha256)
     with tempfile.TemporaryDirectory() as tmp:
@@ -327,9 +381,12 @@ def verify_reply(subject_sha256: str, query: bytes, reply: bytes, ca_pem: bytes,
                 args.extend(['-attime', str(int(validation_time.timestamp()))])
         command(args)
         command(['openssl', 'ts', '-reply', '-in', str(paths['reply']), '-token_out', '-out', str(paths['token'])])
+        signer_path = Path(tmp) / 'signer.pem'
         command(['openssl', 'cms', '-verify', '-binary', '-inform', 'DER', '-outform', 'DER',
-                 '-in', str(paths['token']), '-noverify',
-                 '-out', str(paths['info'])])
+                 '-in', str(paths['token']), '-noverify', '-signer', str(signer_path), '-out', str(paths['info'])])
+        if uses_crl and profile.revocation_policy == APED_POLICY:
+            certs = command(['openssl', 'pkcs7', '-inform', 'DER', '-in', str(paths['token']), '-print_certs'])
+            crl_window = _aped_window(ca_pem, certs, signer_path.read_bytes(), crl_bundle, validation_time)
         info = token_metadata(paths['info'].read_bytes(), profile)
     if info['imprint'] != subject_sha256 or info['nonce'] != nonces[0]:
         raise VerificationError('signed message imprint or nonce mismatch')
@@ -351,6 +408,8 @@ def verify_reply(subject_sha256: str, query: bytes, reply: bytes, ca_pem: bytes,
                       crl_base64=base64.b64encode(crl_bundle).decode('ascii'),
                       crl_valid_from=crl_window[0].isoformat().replace('+00:00', 'Z'),
                       crl_valid_until=crl_window[1].isoformat().replace('+00:00', 'Z'))
+        if profile.revocation_policy == APED_POLICY:
+            report['verifier'] = 'openssl-ts+fi-aped-crl-v1'
     return report
 
 

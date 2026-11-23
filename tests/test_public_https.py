@@ -89,6 +89,14 @@ class PublicHTTPSTests(unittest.TestCase):
             send.assert_not_called()
             self.assertFalse((directory / 'request.tsq').exists())
 
+    def test_public_fixture_accepts_only_a_sha256_imprint_nonce_and_cert_request(self):
+        from future_intelligence.delivery.timestamps import make_query
+        query=make_query('a'*64)
+        self.assertEqual(probe_public_tsa.public_fixture_query(query.hex()),(query,'a'*64))
+        for bad in (query[:-1],query+b'X',query[:-1]+b'\x00'):
+            with self.assertRaises(ValueError):
+                probe_public_tsa.public_fixture_query(bad.hex())
+
     def test_public_tsa_sample_persists_exact_bytes_and_refuses_replay(self):
         with tempfile.TemporaryDirectory() as work, patch.object(probe_public_tsa, 'probe_egress',
                 return_value={'tls_passed': True}), patch.object(probe_public_tsa, 'make_query',

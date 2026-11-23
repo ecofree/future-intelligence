@@ -62,7 +62,7 @@ def run_once(repo, experiment: str, transport=None, environ=None, *, task_id: st
     if input_count_record is not None and target is None:
         return {'status': 'BLOCKED', 'reason': 'INPUT_COUNT_REQUIRES_EXACT_TASK'}
     try:
-        lease = repo.claim_for_dispatch(experiment, target, input_count_record)
+        lease = repo.claim_for_dispatch(experiment, target, input_count_record, environ=environ)
     except Blocked as exc:
         return {'status': 'BLOCKED', 'reason': str(exc)}
     if lease is None:

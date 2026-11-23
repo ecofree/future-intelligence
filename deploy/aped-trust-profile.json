@@ -1,0 +1,9 @@
+{
+  "ca_sha256": "b61518c2cd07d72cb7591a7537ac7f36901b8d343db9889e19f6977f5729e5d9",
+  "policy_oids": ["1.2.300.0.110001.2.1.2"],
+  "max_accuracy_us": 1000000,
+  "missing_accuracy_us": null,
+  "fixture": false,
+  "revocation_policy": "aped-qualified-full-chain-crl-v1",
+  "max_crl_age_seconds": 31536000
+}
