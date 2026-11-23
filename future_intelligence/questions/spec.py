@@ -51,8 +51,10 @@ def validate_spec(value: Any) -> dict[str, Any]:
         date = date.astimezone(timezone.utc)
         dates.append(date)
         spec[key] = date.isoformat(timespec="microseconds")
-    if not dates[0] < dates[1] <= dates[2]:
-        raise ValueError("require forecast_deadline < outcome_not_before <= resolution_deadline")
+    # Forecast admission is exclusive; outcome publication is inclusive. Their
+    # bounds may coincide without admitting a prediction at the release instant.
+    if not dates[0] <= dates[1] <= dates[2]:
+        raise ValueError("require forecast_deadline <= outcome_not_before <= resolution_deadline")
     edges = spec["bin_edges"]
     if not isinstance(edges, list) or len(edges) > 100:
         raise ValueError("bin_edges must be a list with at most 100 entries")

@@ -4,9 +4,10 @@ import json
 import os
 from pathlib import Path
 import sys
+from uuid import UUID
 
 from .repository import DeliveryRepository
-from .timestamps import TrustProfile,request_reply
+from .timestamps import MAX_PROOF,request_reply,trust_profile_from_dict
 from .batch import strict_json
 from .exports import verify_export
 from .evaluation import compare_score_rows
@@ -19,24 +20,40 @@ def main():
     c=sub.add_parser('capture');c.add_argument('experiment');c.add_argument('kind',choices=['REGISTRATION','FORECAST']);c.add_argument('--plan',type=Path);c.add_argument('--profile',type=Path)
     a=sub.add_parser('anchor');a.add_argument('batch');a.add_argument('--url',required=True);a.add_argument('--allowed-host',required=True);a.add_argument('--allow-network',action='store_true')
     v=sub.add_parser('verify-anchor');v.add_argument('request');v.add_argument('--ca',type=Path,required=True);v.add_argument('--profile',type=Path,required=True)
+    v.add_argument('--crl',type=Path,help='Reviewed PEM CRL bundle; required by the offline full-chain CRL profile.')
     e=sub.add_parser('export');e.add_argument('experiment');e.add_argument('output',type=Path)
     v=sub.add_parser('verify-export');v.add_argument('input',type=Path);v.add_argument('--ca',type=Path,required=True);v.add_argument('--profile',type=Path,required=True)
+    v.add_argument('--crl',type=Path,help='Optional current CRL bundle; otherwise reverify the CRL bytes retained with each proof.')
     r=sub.add_parser('resolve');r.add_argument('input',type=Path)
     c=sub.add_parser('confirm');c.add_argument('proposal');c.add_argument('--note',required=True)
     s=sub.add_parser('score');s.add_argument('experiment')
     t=sub.add_parser('analyze');t.add_argument('run');t.add_argument('--diagnostic',action='store_true')
     w=sub.add_parser('worker');w.add_argument('experiment');w.add_argument('--cycles',type=int,default=1);w.add_argument('--interval',type=float,default=10);w.add_argument('--allow-network',action='store_true')
+    w.add_argument('--task',type=UUID,help='Claim exactly one task; requires --cycles 1.')
+    w.add_argument('--input-count-record',type=Path,help='Validate a matching input-count receipt before sending; requires --task.')
     r=sub.add_parser('recover');r.add_argument('experiment')
     c=sub.add_parser('collect-bls');c.add_argument('permission');c.add_argument('series');c.add_argument('year',type=int);c.add_argument('period');c.add_argument('--allow-network',action='store_true')
     a=sub.add_parser('add-evidence');a.add_argument('input',type=Path)
     args=p.parse_args()
+    if args.command=='worker' and args.task is not None and args.cycles!=1:
+        raise ValueError('exact task selection requires --cycles 1')
+    count_record=None
+    if args.command=='worker' and args.input_count_record is not None:
+        if args.task is None:raise ValueError('--input-count-record requires --task')
+        from future_intelligence.tasks.live_worker import load_count_record
+        count_record=load_count_record(args.input_count_record)
     def load(path):
         if path.stat().st_size>50_000_000:raise ValueError('oversized input')
         return strict_json(path.read_text(encoding='utf-8'))
     def profile(path):
-        values=load(path);values['policy_oids']=tuple(values['policy_oids']);return TrustProfile(**values)
+        return trust_profile_from_dict(load(path))
+    def crl(path):
+        if path is None:return None
+        with path.open('rb') as source:value=source.read(MAX_PROOF+1)
+        if not 1<=len(value)<=MAX_PROOF:raise ValueError('invalid CRL bundle size')
+        return value
     if args.command=='verify-export':
-        return verify_export(load(args.input),args.ca.read_bytes(),profile(args.profile))
+        return verify_export(load(args.input),args.ca.read_bytes(),profile(args.profile),crl_bundle=crl(args.crl))
     role={'verify-anchor':'VERIFIER','resolve':'RESOLVER','confirm':'REVIEWER','score':'SCORER','analyze':'SCORER','worker':'WORKER','collect-bls':'SOURCE_ADMIN','add-evidence':'RESOLVER'}.get(args.command,'OPERATOR')
     dsn=os.environ.get('FI_'+role+'_DATABASE_URL')
     if not dsn:raise ValueError('required isolated role DSN missing')
@@ -52,7 +69,8 @@ def main():
         except Exception:
             repo.receive(rid,None,'TSA_NETWORK_OR_REPLY_FAILURE');return {'request_id':rid,'status':'FAILED'}
         repo.receive(rid,reply);return {'request_id':rid,'status':'RECEIVED_NOT_VERIFIED'}
-    if args.command=='verify-anchor':return repo.verify_anchor(args.request,args.ca.read_bytes(),profile(args.profile))
+    if args.command=='verify-anchor':
+        return repo.verify_anchor(args.request,args.ca.read_bytes(),profile(args.profile),crl_bundle=crl(args.crl))
     if args.command=='export':
         value=repo.export(args.experiment)
         # Never overwrite an older export; no public upload is performed.
@@ -89,13 +107,19 @@ def main():
         def step():
             gate=repo.one('SELECT fi.worker_delivery_gate(%s::uuid)',(args.experiment,))
             if not gate['ready']:return {'status':'BLOCKED','reason':gate['reason']}
-            return run_once(worker,args.experiment)
+            return run_once(worker,args.experiment,task_id=args.task,input_count_record=count_record)
         return supervise(step,cycles=args.cycles,interval=args.interval)
 
 
 if __name__=='__main__':
     try:
-        print(json.dumps(main(),ensure_ascii=False,default=str,allow_nan=False))
+        result=main()
+        print(json.dumps(result,ensure_ascii=False,default=str,allow_nan=False))
+        # Worker lists preserve their observations; a stopped worker is not success.
+        if isinstance(result,list) and any(isinstance(item,dict) and (
+            item.get('http_status')==401 or item.get('status') in
+            {'BLOCKED','NO_REDISPATCH','STOPPED_UNCERTAIN'}) for item in result):
+            sys.exit(2)
     except Exception as exc:
         # No DSNs, keys, HTTP bodies or stack traces in operational output.
         print(json.dumps({'status':'BLOCKED_OR_UNCERTAIN','error_type':type(exc).__name__,'automatic_redispatch':False}))

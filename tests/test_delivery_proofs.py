@@ -56,6 +56,11 @@ class TimestampTests(unittest.TestCase):
     def test_real_crypto_fixture(self):
         result=self.verify();self.assertEqual(result['status'],'VERIFIED');self.assertTrue(result['fixture'])
         self.assertEqual(result['accuracy_us'],1_000_000)
+    def test_binary_imprint_survives_cms_extraction(self):
+        subject = '0a0d1a00' * 8
+        query = make_query(subject)
+        result = self.verify(subject_sha256=subject, query=query, reply=timestamp(self.config, query))
+        self.assertEqual(result['subject_sha256'], subject)
     def test_late(self):
         self.assertEqual(self.verify(deadline='2000-01-01T00:00:00Z')['status'],'VERIFIED_LATE')
     def test_wrong_subject(self):

@@ -1,6 +1,7 @@
 """Short, committed transactions. Never hold a connection across provider I/O."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from uuid import UUID
 
 from .spec import validate_registration
@@ -17,11 +18,16 @@ class TaskRepository:
     def __init__(self, dsn: str):
         self._dsn = dsn
 
-    def _call(self, statement: str, params: tuple = ()):
+    @contextmanager
+    def _transaction(self):
         import psycopg
         with psycopg.connect(self._dsn) as connection:
             connection.execute("SET LOCAL lock_timeout = '5s'")
             connection.execute("SET LOCAL statement_timeout = '20s'")
+            yield connection
+
+    def _call(self, statement: str, params: tuple = ()):
+        with self._transaction() as connection:
             row = connection.execute(statement, params).fetchone()
             if row is None:
                 raise LookupError("record not found")
@@ -38,8 +44,14 @@ class TaskRepository:
     def bind_worker(self, experiment: str | UUID, entry: str, login: str) -> None:
         self._call("SELECT fi.bind_worker(%s::uuid,%s,%s::name)", (uuid_text(experiment), entry, login))
 
-    def claim(self, experiment: str | UUID, run_kind: str) -> dict | None:
-        return self._call("SELECT fi.claim_task(%s::uuid,%s)", (uuid_text(experiment), run_kind))
+    @staticmethod
+    def _claim_query(experiment, run_kind, task_id):
+        if task_id is not None:
+            return "SELECT fi.claim_task(%s::uuid,%s,%s::uuid)", (uuid_text(experiment), run_kind, uuid_text(task_id))
+        return "SELECT fi.claim_task(%s::uuid,%s)", (uuid_text(experiment), run_kind)
+
+    def claim(self, experiment: str | UUID, run_kind: str, *, task_id: str | UUID | None = None) -> dict | None:
+        return self._call(*self._claim_query(experiment, run_kind, task_id))
 
     @staticmethod
     def _identity(lease: dict) -> tuple:

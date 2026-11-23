@@ -5,6 +5,8 @@ OpenTimestamps evidence is independent and never substitutes for precise TSA tim
 """
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -22,7 +24,20 @@ from .batch import digest
 
 UTC = timezone.utc
 MAX_PROOF = 2_000_000
+MAX_PROOF_BYTES = MAX_PROOF
 SHA256_OID = bytes.fromhex('608648016503040201')
+CRL_POLICY = 'offline-full-chain-crl-v1'
+APED_POLICY = 'aped-qualified-full-chain-crl-v1'
+APED_ROOT_PEM_SHA256 = 'b61518c2cd07d72cb7591a7537ac7f36901b8d343db9889e19f6977f5729e5d9'
+APED_ISSUER_DER_SHA256 = '617df207c51979d14eb35e05afe7530c3002909cf1fd333f70ffc189df1bc662'
+APED_OID = '1.2.300.0.110001.2.1.2'
+# Earliest nextUpdate in the two independently signed EU/Greek trust lists.
+APED_REVIEW_UNTIL = datetime(2027, 2, 25, 7, tzinfo=UTC)
+_TRUST_FIELDS = frozenset(('ca_sha256', 'policy_oids', 'max_accuracy_us', 'missing_accuracy_us', 'fixture'))
+_CRL_TRUST_FIELDS = _TRUST_FIELDS | {'revocation_policy', 'max_crl_age_seconds'}
+_CRL_PEM = re.compile(
+    rb'-----BEGIN X509 CRL-----\r?\n(?P<body>(?:[A-Za-z0-9+/=]+\r?\n)+)-----END X509 CRL-----(?:\r?\n|\Z)'
+)
 
 
 class VerificationError(ValueError):
@@ -129,6 +144,157 @@ class TrustProfile:
             raise VerificationError('invalid trust profile')
 
 
+@dataclass(frozen=True, kw_only=True)
+class CRLTrustProfile(TrustProfile):
+    """Explicit offline full-chain revocation policy; never inferred from v1."""
+    revocation_policy: str
+    max_crl_age_seconds: int
+
+    def validate(self) -> None:
+        super().validate()
+        if self.revocation_policy not in (CRL_POLICY, APED_POLICY) or type(self.max_crl_age_seconds) is not int \
+                or not 1 <= self.max_crl_age_seconds <= 31_536_000:
+            raise VerificationError('invalid offline CRL policy')
+        if self.revocation_policy == APED_POLICY and (
+            self.ca_sha256 != APED_ROOT_PEM_SHA256 or self.policy_oids != (APED_OID,)
+            or self.max_accuracy_us != 1_000_000 or self.missing_accuracy_us is not None
+            or self.fixture or self.max_crl_age_seconds != 31_536_000
+        ):
+            raise VerificationError('APED profile differs from reviewed public trust material')
+
+
+def trust_profile_from_dict(value: dict) -> TrustProfile:
+    """Load one exact, versioned profile shape without adding fields to v1."""
+    if not isinstance(value, dict) or value.keys() not in (_TRUST_FIELDS, _CRL_TRUST_FIELDS):
+        raise VerificationError('trust profile requires exactly five or seven fields')
+    if not isinstance(value['policy_oids'], (list, tuple)) \
+            or any(not isinstance(oid, str) for oid in value['policy_oids']):
+        raise VerificationError('explicit TSA policies required')
+    values = {**value, 'policy_oids': tuple(value['policy_oids'])}
+    cls = CRLTrustProfile if value.keys() == _CRL_TRUST_FIELDS else TrustProfile
+    try:
+        result = cls(**values)
+        result.validate()
+    except (TypeError, ValueError) as exc:
+        raise VerificationError('invalid trust profile') from exc
+    return result
+
+
+def _crl_time(field: tuple[int, bytes]) -> datetime:
+    """RFC 5280 CRL times have seconds and Z, with no fractional seconds."""
+    tag, value = field
+    if tag not in (23, 24) or re.fullmatch(rb'\d{12}Z' if tag == 23 else rb'\d{14}Z', value) is None:
+        raise VerificationError('invalid CRL update time')
+    try:
+        offset = 2 if tag == 23 else 4
+        year = int(value[:offset])
+        if tag == 23:
+            year += 2000 if year < 50 else 1900
+        parts = [int(value[i:i+2]) for i in range(offset, offset + 10, 2)]
+        return datetime(year, *parts, tzinfo=UTC)
+    except ValueError as exc:
+        raise VerificationError('invalid CRL update time') from exc
+
+
+def _crl_times(der: bytes) -> tuple[datetime, datetime]:
+    """Read only the bounded CRL structure and dates; OpenSSL checks signatures."""
+    outer = sequence(der)
+    if len(outer) != 3 or [tag for tag, _ in outer] != [48, 48, 3]:
+        raise VerificationError('invalid CRL structure')
+    fields = tlvs(outer[0][1])
+    offset = 0
+    if fields and fields[0][0] == 2:
+        if integer(fields[0][1]) != 1:
+            raise VerificationError('unsupported CRL version')
+        offset = 1
+    if len(fields) < offset + 4 or [tag for tag, _ in fields[offset:offset+2]] != [48, 48]:
+        raise VerificationError('CRL requires issuer and both update times')
+    last_update = _crl_time(fields[offset+2])
+    next_update = _crl_time(fields[offset+3])
+    if [tag for tag, _ in fields[offset+4:]] not in ([], [48], [160], [48, 160]):
+        raise VerificationError('invalid CRL structure')
+    if next_update <= last_update:
+        raise VerificationError('invalid CRL validity interval')
+    return last_update, next_update
+
+
+def _crl_window(bundle: bytes, max_age_seconds: int, now: datetime) -> tuple[datetime, datetime]:
+    """Accept only 1..8 PEM CRLs, all fresh, without importing any trust anchors."""
+    if not isinstance(bundle, bytes) or not 0 < len(bundle) <= MAX_PROOF_BYTES:
+        raise VerificationError('missing or oversized CRL bundle')
+    position, windows = 0, []
+    while position < len(bundle):
+        while position < len(bundle) and bundle[position] in b' \t\r\n':
+            position += 1
+        if position == len(bundle):
+            break
+        match = _CRL_PEM.match(bundle, position)
+        if match is None or len(windows) == 8:
+            raise VerificationError('bundle must contain only one to eight PEM X509 CRLs')
+        body = b''.join(match['body'].splitlines())
+        try:
+            der = base64.b64decode(body, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise VerificationError('invalid CRL PEM encoding') from exc
+        if base64.b64encode(der) != body:
+            raise VerificationError('noncanonical CRL PEM encoding')
+        last_update, next_update = _crl_times(der)
+        try:
+            age_limit = last_update + timedelta(seconds=max_age_seconds)
+        except OverflowError as exc:
+            raise VerificationError('invalid CRL age interval') from exc
+        valid_until = min(next_update, age_limit)
+        if not last_update <= now < valid_until:
+            raise VerificationError('CRL is not current within the configured maximum age')
+        windows.append((last_update, valid_until))
+        position = match.end()
+    if not windows:
+        raise VerificationError('CRL bundle is empty')
+    return max(start for start, _ in windows), min(end for _, end in windows)
+
+
+def _aped_window(root_pem: bytes, certificates: bytes, signer_pem: bytes, bundle: bytes,
+                 now: datetime) -> tuple[datetime, datetime]:
+    from cryptography import x509
+    from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
+    from cryptography.hazmat.primitives import hashes
+
+    try:
+        root = x509.load_pem_x509_certificate(root_pem)
+        signers = x509.load_pem_x509_certificates(signer_pem)
+        issuers = [cert for cert in x509.load_pem_x509_certificates(certificates)
+                   if cert.fingerprint(hashes.SHA256()).hex() == APED_ISSUER_DER_SHA256]
+        if len(signers) != 1 or len(issuers) != 1:
+            raise VerificationError('APED requires one signer and the listed issuing CA')
+        signer, issuer = signers[0], issuers[0]
+        signer.verify_directly_issued_by(issuer)
+        issuer.verify_directly_issued_by(root)
+        # The strictly parsed CRL-only bundle has already passed OpenSSL full-chain checking.
+        crls = [x509.load_pem_x509_crl(match.group()) for match in _CRL_PEM.finditer(bundle)]
+        if len(crls) != 2:
+            raise VerificationError('APED requires exactly two distinct issuer CRLs')
+        starts, ends = [], [APED_REVIEW_UNTIL]
+        for ca, child, age in ((issuer, signer, 86400), (root, issuer, 31536000)):
+            matches = [crl for crl in crls if crl.issuer == ca.subject]
+            if len(matches) != 1:
+                raise VerificationError('APED CRL issuer set differs from the pinned chain')
+            crl = matches[0]
+            if (not crl.is_signature_valid(ca.public_key()) or crl.next_update_utc is None
+                    or crl.get_revoked_certificate_by_serial_number(child.serial_number) is not None):
+                raise VerificationError('APED certificate revocation check failed')
+            starts.append(crl.last_update_utc)
+            ends.extend((crl.next_update_utc, crl.last_update_utc + timedelta(seconds=age),
+                         child.not_valid_after_utc, ca.not_valid_after_utc))
+        start, end = max(starts), min(ends)
+        if not start <= now < end:
+            raise VerificationError('APED issuer-specific freshness or trust review expired')
+        return start, end
+    except (ValueError, TypeError, InvalidSignature, UnsupportedAlgorithm) as exc:
+        if isinstance(exc, VerificationError):
+            raise
+        raise VerificationError('invalid APED signer, issuer or revocation material') from exc
+
+
 def make_query(subject_sha256: str) -> bytes:
     digest(subject_sha256)
     with tempfile.TemporaryDirectory() as tmp:
@@ -180,8 +346,16 @@ def token_metadata(data: bytes, profile: TrustProfile) -> dict:
 
 
 def verify_reply(subject_sha256: str, query: bytes, reply: bytes, ca_pem: bytes,
-                 profile: TrustProfile, deadline: str | datetime, *, now: datetime | None = None) -> dict:
+                 profile: TrustProfile, deadline: str | datetime, *, now: datetime | None = None,
+                 crl_bundle: bytes | None = None) -> dict:
     profile.validate(); expected = digest(subject_sha256)
+    uses_crl = isinstance(profile, CRLTrustProfile)
+    if not uses_crl and crl_bundle is not None:
+        raise VerificationError('CRL material requires an explicit CRL trust profile')
+    if uses_crl and now is not None and not profile.fixture:
+        raise VerificationError('production CRL verification cannot override the current time')
+    validation_time = utc(now or datetime.now(UTC)) if uses_crl else None
+    crl_window = _crl_window(crl_bundle, profile.max_crl_age_seconds, validation_time) if uses_crl else None
     if any(not isinstance(x, bytes) or not 0 < len(x) <= MAX_PROOF for x in (query, reply, ca_pem)):
         raise VerificationError('missing or oversized timestamp material')
     if hashlib.sha256(ca_pem).hexdigest() != profile.ca_sha256:
@@ -194,25 +368,49 @@ def verify_reply(subject_sha256: str, query: bytes, reply: bytes, ca_pem: bytes,
         raise VerificationError('exactly one query nonce required')
     with tempfile.TemporaryDirectory() as tmp:
         paths = {k: Path(tmp) / k for k in ('request', 'reply', 'ca', 'token', 'info')}
-        for k, value in (('request', query), ('reply', reply), ('ca', ca_pem)):
+        if uses_crl and b'-----BEGIN X509 CRL-----' in ca_pem:
+            raise VerificationError('CRLs must be supplied separately from the pinned CA bundle')
+        store = ca_pem + b'\n' + crl_bundle if uses_crl else ca_pem
+        for k, value in (('request', query), ('reply', reply), ('ca', store)):
             paths[k].write_bytes(value)
-        command(['openssl', 'ts', '-verify', '-queryfile', str(paths['request']), '-in', str(paths['reply']),
-                 '-CAfile', str(paths['ca']), '-CApath', tmp, '-CAstore', str(paths['ca']), '-auth_level', '2'])
+        args = ['openssl', 'ts', '-verify', '-queryfile', str(paths['request']), '-in', str(paths['reply']),
+                '-CAfile', str(paths['ca']), '-CApath', tmp, '-CAstore', str(paths['ca']), '-auth_level', '2']
+        if uses_crl:
+            args.extend(['-crl_check', '-crl_check_all'])
+            if now is not None:  # Only an explicitly marked local fixture can use a synthetic clock.
+                args.extend(['-attime', str(int(validation_time.timestamp()))])
+        command(args)
         command(['openssl', 'ts', '-reply', '-in', str(paths['reply']), '-token_out', '-out', str(paths['token'])])
-        command(['openssl', 'cms', '-verify', '-inform', 'DER', '-in', str(paths['token']), '-noverify',
-                 '-out', str(paths['info'])])
+        signer_path = Path(tmp) / 'signer.pem'
+        command(['openssl', 'cms', '-verify', '-binary', '-inform', 'DER', '-outform', 'DER',
+                 '-in', str(paths['token']), '-noverify', '-signer', str(signer_path), '-out', str(paths['info'])])
+        if uses_crl and profile.revocation_policy == APED_POLICY:
+            certs = command(['openssl', 'pkcs7', '-inform', 'DER', '-in', str(paths['token']), '-print_certs'])
+            crl_window = _aped_window(ca_pem, certs, signer_path.read_bytes(), crl_bundle, validation_time)
         info = token_metadata(paths['info'].read_bytes(), profile)
     if info['imprint'] != subject_sha256 or info['nonce'] != nonces[0]:
         raise VerificationError('signed message imprint or nonce mismatch')
     if info['gen_time'] > utc(now or datetime.now(UTC)) + timedelta(seconds=5):
         raise VerificationError('timestamp is in the future')
-    eligible = info['upper_time'] <= utc(deadline)
-    return dict(protocol='fi.rfc3161-verification.v1', status='VERIFIED' if eligible else 'VERIFIED_LATE',
-                subject_sha256=subject_sha256, gen_time=info['gen_time'].isoformat(),
-                upper_time=info['upper_time'].isoformat(), accuracy_us=info['accuracy_us'],
-                policy_oid=info['policy_oid'], ca_sha256=profile.ca_sha256,
-                reply_sha256=hashlib.sha256(reply).hexdigest(), fixture=profile.fixture,
-                verifier='openssl-ts+fi-tstinfo-v1', revocation_status='NOT_CHECKED')
+    if uses_crl and not crl_window[0] <= utc(now or datetime.now(UTC)) < crl_window[1]:
+        raise VerificationError('CRL validity interval ended during verification')
+    # Even the uncertainty upper bound must precede the exclusive cutoff.
+    eligible = info['upper_time'] < utc(deadline)
+    report = dict(protocol='fi.rfc3161-verification.v1', status='VERIFIED' if eligible else 'VERIFIED_LATE',
+                  subject_sha256=subject_sha256, gen_time=info['gen_time'].isoformat(),
+                  upper_time=info['upper_time'].isoformat(), accuracy_us=info['accuracy_us'],
+                  policy_oid=info['policy_oid'], ca_sha256=profile.ca_sha256,
+                  reply_sha256=hashlib.sha256(reply).hexdigest(), fixture=profile.fixture,
+                  verifier='openssl-ts+fi-tstinfo-v1', revocation_status='NOT_CHECKED')
+    if uses_crl:
+        report.update(protocol='fi.rfc3161-verification.v2', verifier='openssl-ts+fi-tstinfo-crl-v2',
+                      revocation_status='GOOD', crl_sha256=hashlib.sha256(crl_bundle).hexdigest(),
+                      crl_base64=base64.b64encode(crl_bundle).decode('ascii'),
+                      crl_valid_from=crl_window[0].isoformat().replace('+00:00', 'Z'),
+                      crl_valid_until=crl_window[1].isoformat().replace('+00:00', 'Z'))
+        if profile.revocation_policy == APED_POLICY:
+            report['verifier'] = 'openssl-ts+fi-aped-crl-v1'
+    return report
 
 
 def request_reply(url: str, query: bytes, *, allowed_host: str, timeout: int = 15) -> bytes:

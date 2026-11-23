@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime
 import json
 from uuid import UUID
 
@@ -68,7 +69,8 @@ class DeliveryRepository:
     def receive(self, request_id, reply: bytes | None, error_code: str | None=None):
         self.one('SELECT fi.receive_anchor(%s::uuid,%s,%s)',(uid(request_id),reply,error_code))
 
-    def verify_anchor(self, request_id, ca_pem: bytes, trusted_profile: TrustProfile) -> dict:
+    def verify_anchor(self, request_id, ca_pem: bytes, trusted_profile: TrustProfile,
+                      *, crl_bundle: bytes | None = None) -> dict:
         from psycopg.types.json import Jsonb
         # Binary material is base64 only at the JSON transport boundary.
         data = self.one("""SELECT jsonb_build_object('query',encode(a.request_bytes,'base64'),
@@ -80,7 +82,7 @@ class DeliveryRepository:
         if external != data['profile']:
             raise ValueError('independent trust configuration disagrees with preregistration')
         result = verify_reply(data['subject'],base64.b64decode(data['query']),base64.b64decode(data['reply']),
-                              ca_pem,trusted_profile,data['deadline'])
+                              ca_pem,trusted_profile,data['deadline'],crl_bundle=crl_bundle)
         self.one('SELECT fi.attest_anchor(%s::uuid,%s)',(uid(request_id),Jsonb(result)))
         return result
 
@@ -101,17 +103,85 @@ class DeliveryRepository:
     def scores(self, run):
         return self.many('SELECT * FROM fi.score_rows WHERE run_id=%s::uuid ORDER BY entry_key,question_version_id',(uid(run),))
 
-    def overview(self):
-        return self.many('SELECT * FROM fi.experiment_summary ORDER BY id LIMIT 200')
+    def list_page(self, resource, page_size=100, cursor=None, experiment_id=None):
+        """Bounded keyset page; a live view, not a frozen audit export.
+
+        Cursor scope is validated, never used as an authority. The existing
+        role-specific DB connection still enforces access. No caller SQL identifiers.
+        """
+        queries = {
+            'experiments': ('*', 'fi.experiment_summary', 'id', None, 'id'),
+            'outcomes': ('*', 'fi.outcome_catalog', 'version_id', None, None),
+            'batches': ('*', 'fi.batch_catalog', 'id', 'captured_at', 'experiment_id'),
+            'runs': ('id,experiment_id,algorithm,context_sha256,created_at',
+                     'fi.score_runs', 'id', 'created_at', 'experiment_id'),
+        }
+        if resource not in queries or type(page_size) is not int or not 1 <= page_size <= 200:
+            raise ValueError('invalid page request')
+        columns, relation, id_column, time_column, filter_column = queries[resource]
+        scope = uid(experiment_id) if experiment_id is not None else None
+        if scope is not None and filter_column is None:
+            raise ValueError('experiment filter unavailable for this resource')
+        terms, params = [], []
+        if scope is not None:
+            terms.append(filter_column+'=%s::uuid'); params.append(scope)
+        if cursor is not None:
+            # Keep malformed, cross-resource and cross-filter cursors out of SQL.
+            try:
+                if not isinstance(cursor, str) or not 1 <= len(cursor) <= 1024:
+                    raise ValueError
+                raw = base64.b64decode(cursor+'='*((-len(cursor)) % 4), altchars=b'-_', validate=True)
+                data = json.loads(raw)
+                if (not isinstance(data, list) or len(data) != 5 or type(data[0]) is not int
+                        or data[:3] != [1, resource, scope] or not isinstance(data[3], list)):
+                    raise ValueError
+                key = data[3]
+                # Last slot binds the page size so changing size cannot silently
+                # change the traversal contract during a user's navigation.
+                if type(data[4]) is not int or data[4] != page_size:
+                    raise ValueError
+                if len(key) != (2 if time_column else 1) or not all(isinstance(k,str) for k in key):
+                    raise ValueError
+                last_id = uid(key[-1])
+                if time_column:
+                    stamp = datetime.fromisoformat(key[0].replace('Z', '+00:00'))
+                    if stamp.tzinfo is None or stamp.utcoffset() is None:
+                        raise ValueError
+                    terms.append('('+time_column+','+id_column+') < (%s::timestamptz,%s::uuid)')
+                    params.extend([stamp.isoformat(), last_id])
+                else:
+                    terms.append(id_column+' > %s::uuid'); params.append(last_id)
+            except (ValueError, TypeError, UnicodeError, OverflowError):
+                raise ValueError('invalid or mismatched page cursor') from None
+        order = time_column+' DESC,'+id_column+' DESC' if time_column else id_column
+        statement = 'SELECT '+columns+' FROM '+relation
+        if terms: statement += ' WHERE '+' AND '.join(terms)
+        statement += ' ORDER BY '+order+' LIMIT %s'
+        rows = self.many(statement, tuple(params+[page_size+1]))
+        more = len(rows) > page_size
+        items = rows[:page_size]
+        next_cursor = None
+        if more:
+            last = items[-1]
+            key = [str(last[time_column]), str(last[id_column])] if time_column else [str(last[id_column])]
+            value = json.dumps([1,resource,scope,key,page_size],separators=(',',':')).encode('utf-8')
+            next_cursor = base64.urlsafe_b64encode(value).decode('ascii').rstrip('=')
+        return {'items':items, 'next_cursor':next_cursor, 'has_more':more,
+                'page_size':page_size, 'consistency':'LIVE_VIEW_NOT_AUDIT_SNAPSHOT'}
+
+    def overview(self, *, experiment_id=None):
+        # Existing callers still get one list. Tests for a known experiment must
+        # use this exact filter, not assume it falls inside an arbitrary first page.
+        return self.list_page('experiments',200,experiment_id=experiment_id)['items']
 
     def outcomes(self):
-        return self.many('SELECT * FROM fi.outcome_catalog ORDER BY version_id LIMIT 200')
+        return self.list_page('outcomes',200)['items']
 
     def batches(self):
-        return self.many('SELECT * FROM fi.batch_catalog ORDER BY captured_at DESC LIMIT 200')
+        return self.list_page('batches',200)['items']
 
     def score_runs(self):
-        return self.many('SELECT id,experiment_id,algorithm,context_sha256,created_at FROM fi.score_runs ORDER BY created_at DESC LIMIT 200')
+        return self.list_page('runs',200)['items']
 
     def score_summary(self, run):
         return self.many('SELECT * FROM fi.score_summary WHERE run_id=%s::uuid ORDER BY cohort_key,entry_key',(uid(run),))

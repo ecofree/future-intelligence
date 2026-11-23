@@ -2,10 +2,70 @@ name: Disposable deployment and browser
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      recipient_certificate:
+        description: 'Public PEM certificate to encrypt the one-time, non-experimental APED review'
+        type: string
+        required: true
+      public_fixture_query:
+        description: 'Optional SHA-256 timestamp query in hex for a public synthetic QA registration'
+        type: string
+        required: false
 permissions:
   contents: read
 jobs:
+  worker-egress:
+    name: Candidate worker DNS and TLS
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.number == 12) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/terra-retest-integration' && github.run_attempt == 1)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Check pilot and candidate TSA handshakes with empty provider keys
+        run: |
+          export FI_UID=$(id -u) FI_GID=$(id -g)
+          python3 deploy/configure.py
+          docker compose -f deploy/compose.yaml build worker-openai
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            docker compose -f deploy/compose.yaml run --rm -T --no-deps worker-openai python -m future_intelligence.runtime check-egress --additional-tsa-host timestamp.aped.gov.gr
+          fi
+      - name: Request one public test timestamp and encrypt the exchange
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          RECIPIENT_CERTIFICATE: ${{ inputs.recipient_certificate }}
+          PUBLIC_FIXTURE_QUERY: ${{ inputs.public_fixture_query }}
+        run: |
+          set -euo pipefail
+          umask 077
+          export FI_UID=$(id -u) FI_GID=$(id -g)
+          review="$RUNNER_TEMP/tsa-review"
+          mkdir "$review"
+          printf '%s\n' "$RECIPIENT_CERTIFICATE" > "$RUNNER_TEMP/recipient.pem"
+          openssl x509 -in "$RUNNER_TEMP/recipient.pem" -noout
+          # Check encryption before issuing the single request.
+          openssl cms -encrypt -binary -aes256 -in /dev/null -out /dev/null -outform DER "$RUNNER_TEMP/recipient.pem"
+          code=0
+          docker compose -f deploy/compose.yaml run --rm -T --no-deps -v "$review:/review" -e PUBLIC_REVISION="$GITHUB_SHA" -e PUBLIC_FIXTURE_QUERY worker-openai python - < deploy/probe_public_tsa.py || code=$?
+          tar -C "$review" -cf - sample | openssl cms -encrypt -binary -aes256 -out "$RUNNER_TEMP/tsa-review.p7m" -outform DER "$RUNNER_TEMP/recipient.pem"
+          exit "$code"
+      - name: Retain only the encrypted review
+        if: always() && github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: candidate-tsa-review
+          path: ${{ runner.temp }}/tsa-review.p7m
+          retention-days: 1
+          if-no-files-found: error
+      - name: Stop the disposable candidate
+        if: always()
+        run: docker compose -f deploy/compose.yaml --profile live-openai down -v
   compose:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

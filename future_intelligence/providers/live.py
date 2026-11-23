@@ -21,6 +21,7 @@ import time
 from typing import Mapping
 
 from . import compatible
+from future_intelligence.public_https import NonPublicAddress, PublicHTTPS
 from future_intelligence.questions.spec import answer_contract
 
 PROMPT = (
@@ -81,6 +82,39 @@ def _integer(value, low: int, high: int) -> bool:
     return type(value) is int and low <= value <= high
 
 
+def terra_generation_profile() -> dict:
+    """Frozen opt-in contract; omissions are explicit, not determinism claims.
+
+    Applies only to official gpt-6.1-terra + Responses + prompt v2. A caller must
+    register a NEW DIAGNOSTIC before using these changed request bytes formally.
+    See docs/OFFICIAL_TERRA_RETEST.md for dated support sources and alias limits.
+    """
+    return {
+        "protocol": "fi.openai-generation.v1",
+        "reasoning": {"effort": "medium", "mode": "standard"},
+        "service_tier": "default",
+        "temperature": "OMIT_UNSUPPORTED_WITH_REASONING",
+        "top_p": "OMIT_UNSUPPORTED_WITH_REASONING",
+        "seed": "OMIT_NOT_DOCUMENTED_IN_RESPONSES",
+    }
+
+
+def generation_wire(entry: dict) -> dict:
+    """Only the two supported wire fields leave the frozen generation profile."""
+    try:
+        p = entry["parameters"]
+        if "generation" not in p:
+            return {}  # Preserve byte-for-byte legacy DIAGNOSTIC behavior.
+        if (entry["provider"] != "openai" or entry["model_id"] != "gpt-6.1-terra"
+                or entry["prompt_sha256"] != PROMPT_V2_SHA256
+                or encode(p["generation"]) != encode(terra_generation_profile())):
+            raise ValueError
+        return {"reasoning": {"effort": "medium", "mode": "standard"},
+                "service_tier": "default"}
+    except (KeyError, TypeError, ValueError, OverflowError):
+        raise Blocked("INVALID_GENERATION_PROFILE") from None
+
+
 def validate_entry(entry: dict, cap: int, now: datetime | None = None) -> dict:
     """No arbitrary parameter pass-through. Rates are operator-supplied quotes.
 
@@ -104,6 +138,9 @@ def validate_entry(entry: dict, cap: int, now: datetime | None = None) -> dict:
                 compatible.validate_profile(p.get("endpoint"))
             except compatible.EndpointError:
                 raise Blocked("INVALID_ENDPOINT_PROFILE") from None
+        if "generation" in p:
+            generation_wire(entry)
+            wanted = wanted | {"generation"}
         if set(p) != wanted:
             raise ValueError
         if not _integer(p["max_output_tokens"], 128, 16384) or not _integer(p["timeout_seconds"], 1, 120):
@@ -192,6 +229,7 @@ def output_schema_v2(category_count: int, provider: str) -> dict:
 def build_request(entry: dict, input_data: dict) -> str:
     """Return the exact uncredentialed UTF-8 JSON body to register before sending."""
     p = entry["parameters"]
+    generation = generation_wire(entry)
     prompt = PROMPTS.get(entry.get('prompt_sha256'))
     if prompt is None:
         raise Blocked('PROMPT_HASH_MISMATCH')
@@ -241,6 +279,7 @@ def build_request(entry: dict, input_data: dict) -> str:
                 "response_format": compatible_response_format(p["endpoint"], schema)}
     else:
         raise Blocked("UNSUPPORTED_PROVIDER")
+    body.update(generation)
     return encode(body).decode()
 
 
@@ -279,7 +318,8 @@ class HTTPSOnce:
             headers.update({"x-api-key": key, "anthropic-version": "2023-06-01"})
         else:
             headers["x-goog-api-key"] = key
-        conn = http.client.HTTPSConnection(host, timeout=timeout, context=ssl.create_default_context())
+        connection_type = http.client.HTTPSConnection if provider == COMPATIBLE else PublicHTTPS
+        conn = connection_type(host, timeout=timeout, context=ssl.create_default_context())
         end = time.monotonic() + timeout
         try:
             conn.request("POST", path, body=body.encode(), headers=headers)
@@ -301,7 +341,7 @@ class HTTPSOnce:
                                 response.getheader("x-request-id") or response.getheader("request-id"))
         except (TimeoutError, socket.timeout):
             return WireResponse(None, b"", error_code="TIMEOUT")
-        except (OSError, http.client.HTTPException):
+        except (NonPublicAddress, OSError, http.client.HTTPException):
             return WireResponse(None, b"", error_code="TRANSPORT_ERROR")
         finally:
             conn.close()
@@ -317,13 +357,39 @@ def _count(value) -> int | None:
     return value if _integer(value, 0, 1000000000) else None
 
 
+def _reported_generation(data: dict) -> dict:
+    """Retain only allowlisted configuration labels, never reasoning content."""
+    def field(value, allowed):
+        if value is None:
+            return {"state": "MISSING", "value": None}
+        if isinstance(value, str) and value in allowed:
+            return {"state": "PRESENT", "value": value}
+        return {"state": "INVALID", "value": None}
+
+    reasoning = data.get("reasoning")
+    if reasoning is None or isinstance(reasoning, dict):
+        reasoning = reasoning or {}
+        effort = field(reasoning.get("effort"), {"none", "minimal", "low", "medium", "high", "xhigh", "max"})
+        mode = field(reasoning.get("mode"), {"standard", "pro"})
+    else:
+        effort = {"state": "INVALID", "value": None}
+        mode = {"state": "INVALID", "value": None}
+    return {"reasoning_effort": effort, "reasoning_mode": mode,
+            "service_tier": field(data.get("service_tier"), {"auto", "default", "flex", "priority", "scale"})}
+
+
 def parse_response(provider: str, wire: WireResponse, category_count: int,
-                   allowed_evidence_ids: set[str]) -> dict:
+                   allowed_evidence_ids: set[str], *, capture_generation: bool = False) -> dict:
+    if type(capture_generation) is not bool or (capture_generation and provider != "openai"):
+        raise Blocked("INVALID_GENERATION_CAPTURE")
     obs = {"protocol": "fi.provider-observation.v1", "status": "INVALID_OUTPUT",
            "http_status": wire.status, "response_sha256": hashlib.sha256(wire.body).hexdigest() if wire.body else None,
            "model_reported": None, "request_id": _public_id(wire.request_id),
            "usage": {"input_tokens": None, "output_tokens": None, "cached_input_tokens": None},
            "output": None}
+    if capture_generation:
+        obs.update(protocol="fi.provider-observation.v2", response_id=None,
+                   generation_reported=_reported_generation({}))
     if wire.error_code:
         obs["status"] = wire.error_code
         return obs
@@ -337,7 +403,11 @@ def parse_response(provider: str, wire: WireResponse, category_count: int,
         text = []
         if provider == "openai":
             obs["model_reported"] = _public_id(data.get("model"))
-            obs["request_id"] = _public_id(data.get("id")) or obs["request_id"]
+            if capture_generation:
+                obs["response_id"] = _public_id(data.get("id"))
+                obs["generation_reported"] = _reported_generation(data)
+            else:
+                obs["request_id"] = _public_id(data.get("id")) or obs["request_id"]
             usage = data.get("usage") or {}
             obs["usage"] = {"input_tokens": _count(usage.get("input_tokens")),
                             "output_tokens": _count(usage.get("output_tokens")),

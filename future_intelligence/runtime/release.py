@@ -71,7 +71,7 @@ def draft_bls_question(template: dict, calendar_document: bytes, target_document
     if observed.tzinfo is None:
         raise ValueError('observation timezone required')
     cutoff, release, resolution = map(aware, [t['forecast_deadline'],t['outcome_not_before'],t['resolution_deadline']])
-    if not observed < cutoff < release <= resolution:
+    if not observed < cutoff <= release <= resolution:
         raise ValueError('prospective window required')
     document = strict_document(target_document)
     if bls_value(document,t['series'],t['year'],t['period']) is not None:

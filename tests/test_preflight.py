@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from future_intelligence.runtime.preflight import inspect_configuration, main, ROLE_SECRETS, PROVIDER_KEYS
 from future_intelligence.runtime.secrets import read_secret
+from secret_fixture import file_symlink, grant_test_access
 
 
 class PreflightTests(unittest.TestCase):
@@ -66,24 +67,27 @@ class PreflightTests(unittest.TestCase):
     def test_private_file_and_no_value_in_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'private'
-            path.write_text('synthetic-local-secret\n'); path.chmod(0o600)
+            path.write_text('synthetic-local-secret\n'); grant_test_access(path)
             result = inspect_configuration('operator', environ={'FI_OPERATOR_DATABASE_URL_FILE': str(path)})
             self.assertEqual(result['checks'][0]['status'], 'PRESENT_NOT_VALIDATED')
             self.assertNotIn(str(path), json.dumps(result))
             self.assertNotIn('synthetic-local-secret', json.dumps(result))
 
-    def test_empty_insecure_directory_and_symlink_rejected(self):
+    def test_empty_insecure_and_directory_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'file'
             path.touch(mode=0o600)
             for target in (path, Path(tmp)):
                 self.assertEqual(inspect_configuration('operator', environ={'FI_OPERATOR_DATABASE_URL_FILE': str(target)})['checks'][0]['status'], 'INVALID_OR_UNREADABLE')
-            path.write_text('synthetic'); path.chmod(0o644)
+            path.write_text('synthetic'); grant_test_access(path, public=True)
             self.assertEqual(inspect_configuration('operator', environ={'FI_OPERATOR_DATABASE_URL_FILE': str(path)})['checks'][0]['status'], 'INVALID_OR_UNREADABLE')
-            path.chmod(0o600)
-            link = Path(tmp) / 'link'; link.symlink_to(path)
-            if hasattr(os, 'O_NOFOLLOW'):
-                self.assertEqual(inspect_configuration('operator', environ={'FI_OPERATOR_DATABASE_URL_FILE': str(link)})['checks'][0]['status'], 'INVALID_OR_UNREADABLE')
+
+    def test_symlink_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'file'
+            path.write_text('synthetic'); grant_test_access(path)
+            link = Path(tmp) / 'link'; file_symlink(link, path)
+            self.assertEqual(inspect_configuration('operator', environ={'FI_OPERATOR_DATABASE_URL_FILE': str(link)})['checks'][0]['status'], 'INVALID_OR_UNREADABLE')
 
     @unittest.skipUnless(hasattr(os, 'mkfifo'), 'POSIX FIFO regression')
     def test_named_pipe_rejected_without_waiting_for_writer(self):
@@ -107,5 +111,5 @@ class PreflightTests(unittest.TestCase):
     def test_whitespace_and_invalid_utf8_block(self):
         self.assertEqual(inspect_configuration('operator', environ={'FI_OPERATOR_DATABASE_URL': '  '})['checks'][0]['status'], 'MISSING')
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / 'bad'; path.write_bytes(b'\xff'); path.chmod(0o600)
+            path = Path(tmp) / 'bad'; path.write_bytes(b'\xff'); grant_test_access(path)
             self.assertEqual(inspect_configuration('operator', environ={'FI_OPERATOR_DATABASE_URL_FILE': str(path)})['checks'][0]['status'], 'INVALID_OR_UNREADABLE')

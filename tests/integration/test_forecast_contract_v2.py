@@ -30,7 +30,7 @@ class ForecastContractV2Tests(unittest.TestCase):
     checks=previous.OperationalAdmissionTests.checks
     confirm=previous.OperationalAdmissionTests.confirm
 
-    def make(self,provider='openai',edges=None,legacy=False,mode='DIAGNOSTIC',extra=None):
+    def make(self,provider='openai',edges=None,legacy=False,mode='DIAGNOSTIC',extra=None,attempt_cap=1000000):
         # Reuse established role separation and source permission helpers.
         _,pid=self.question(reviewed=False)
         sid=self.admin('SELECT source_id FROM fi.source_permissions WHERE id=%s',(pid,))
@@ -41,7 +41,7 @@ class ForecastContractV2Tests(unittest.TestCase):
         cfg=fixture.entry(provider,legacy)
         if extra: cfg['parameters'].update(extra)
         plan=previous.previous.previous.experiment_spec(run_kind='LIVE',budget_microusd=100000000,
-                    attempt_cap_microusd=1000000,lease_seconds=120)
+                    attempt_cap_microusd=attempt_cap,lease_seconds=120)
         e=self.r['operator'].register('contract-v2-'+uuid4().hex,[v],[cfg],plan)
         if mode:
             self.call('operator','SELECT fi.configure_operation(%s,%s,%s,%s,%s)',
@@ -61,7 +61,7 @@ class ForecastContractV2Tests(unittest.TestCase):
         operator=DeliveryRepository(self.dsns['operator'])
         rid,q=operator.new_anchor(bid)
         operator.receive(rid,timestamp(self.tsa,q))
-        report=DeliveryRepository(self.dsns['verifier']).verify_anchor(rid,self.ca,self.profile)
+        report=DeliveryRepository(self.dsns['verifier']).verify_anchor(rid,self.ca,self.profile,crl_bundle=self.crl)
         time.sleep(max(0,(datetime.fromisoformat(report['upper_time'])-datetime.now(timezone.utc)).total_seconds())+.02)
         self.assertEqual(report['status'],'VERIFIED')
         return report
